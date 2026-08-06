@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": false,
+    "outDir": "work/test-dist",
+    "rootDir": "app/simulation",
+    "declaration": false,
+    "incremental": false
+  },
+  "include": ["app/simulation/*.ts"]
+}
