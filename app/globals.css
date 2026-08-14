@@ -371,7 +371,7 @@ input[type="range"] { width: 100%; height: 3px; accent-color: var(--cyan); }
 .tabs button { border: 0; border-right: 1px solid var(--line); border-radius: 0; background: transparent; color: var(--muted); padding: 8px 17px; white-space: nowrap; font-size: 12px; }
 .tabs button.active { color: var(--text); box-shadow: inset 0 -2px var(--cyan); background: transparent; }
 .tabs button span { margin-left: 5px; padding: 1px 4px; border-radius: 2px; color: var(--text); background: color-mix(in srgb, var(--amber) 22%, transparent); }
-.tabs .tab-result, .tabs .tab-model, .tabs .tab-reference { margin-left: 8px; border-left: 1px solid var(--line-strong); }
+.tabs .tab-result, .tabs .tab-model, .tabs .tab-reference { border-left: 1px solid var(--line-strong); }
 .tabs .tab-model, .tabs .tab-reference { color: var(--faint); }
 .tabs .tab-model.active, .tabs .tab-reference.active { color: var(--text); }
 .tabs .export-csv { margin-left: auto; color: var(--muted); }
