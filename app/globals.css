@@ -75,16 +75,13 @@ button:focus-visible, select:focus-visible, input:focus-visible, summary:focus-v
 .scenario-select select { border: 0; min-height: 32px; max-width: 150px; }
 .model-disclaimer { padding: 6px 18px; font-size: 10px; color: var(--muted); border-bottom: 1px solid var(--line); text-align: center; background: color-mix(in srgb, var(--amber) 4%, var(--bg)); }
 
-.dashboard-grid { min-width: 0; min-height: 0; display: grid; grid-template-columns: clamp(260px, 19vw, 290px) minmax(0, 1fr) clamp(280px, 21vw, 310px); grid-template-rows: minmax(0, 1fr) clamp(190px, 25vh, 260px); grid-template-areas: "config station metrics" "config dock dock"; gap: 10px; padding: 10px; overflow: hidden; }
+.dashboard-grid { min-width: 0; min-height: 0; display: grid; grid-template-columns: clamp(260px, 19vw, 290px) minmax(0, 1fr) clamp(280px, 21vw, 310px); grid-template-rows: auto clamp(460px, 56vh, 560px) minmax(285px, auto); grid-template-areas: "trend trend trend" "config station metrics" "data data data"; gap: 10px; padding: 10px; overflow-x: hidden; overflow-y: auto; }
 .panel { border: 1px solid var(--line); background: var(--panel); box-shadow: var(--shadow); min-width: 0; }
+.trend-overview { grid-area: trend; }
 .config-panel { grid-area: config; min-height: 0; overflow: auto; }
 .station-panel { grid-area: station; min-height: 0; overflow: auto; }
 .metrics-panel { grid-area: metrics; min-height: 0; overflow: auto; }
-.analysis-dock { grid-area: dock; min-width: 0; min-height: 0; display: grid; grid-template-columns: minmax(0, 1.12fr) minmax(0, 1fr); gap: 10px; overflow: hidden; }
-.analysis-dock > .panel { min-height: 0; height: 100%; overflow: auto; }
-.analysis-dock .trend-dashboard { grid-template-columns: minmax(0, 1.6fr) minmax(250px, .9fr); }
-.analysis-dock .data-panel { min-height: 0; display: flex; flex-direction: column; }
-.analysis-dock .data-panel .tab-content { min-height: 0; flex: 1 1 auto; overflow: auto; }
+.data-panel { grid-area: data; }
 .panel-title { justify-content: space-between; gap: 10px; padding: 13px 14px; min-height: 57px; border-bottom: 1px solid var(--line); }
 .panel-title h2, .chart-copy h3, .curve-head h3, .source-intro h3 { margin: 2px 0 0; font-size: 14px; }
 .live-pill { font: 9px Consolas, monospace; color: var(--green); }
@@ -366,13 +363,10 @@ tbody tr:hover { background: var(--cyan-soft); }
   .toolbar button, .toolbar > select { padding-inline: 8px; }
   .scenario-select select { max-width: 130px; }
   .dashboard-grid { grid-template-columns: clamp(238px, 19vw, 260px) minmax(0, 1fr) clamp(250px, 21vw, 280px); }
-  .analysis-dock { grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr); }
-  .analysis-dock .trend-dashboard { grid-template-columns: minmax(0, 1.55fr) minmax(210px, .85fr); }
 }
 
 @media (max-height: 850px) and (min-width: 901px) {
   .app-shell { grid-template-rows: auto auto minmax(0, 1fr); }
-  .dashboard-grid { grid-template-rows: minmax(0, 1fr) 180px; }
   .app-footer { display: none; }
 }
 
@@ -383,11 +377,11 @@ tbody tr:hover { background: var(--cyan-soft); }
   .brand-block { flex-wrap: wrap; }
   .toolbar { justify-content: flex-start; }
   .dashboard-grid { display: flex; flex-direction: column; padding: 7px; overflow: visible; }
+  .trend-overview { order: 0; width: 100%; }
   .station-panel { order: 1; width: 100%; }
   .metrics-panel { order: 2; width: 100%; display: block; }
   .config-panel { order: 3; width: 100%; }
-  .analysis-dock { order: 4; width: 100%; display: flex; flex-direction: column; overflow: visible; }
-  .analysis-dock > .panel { width: 100%; height: auto; overflow: visible; }
+  .data-panel { order: 4; width: 100%; }
   .trend-overview-head { align-items: stretch; flex-direction: column; }
   .trend-dashboard { grid-template-columns: 1fr; }
   .metrics-panel .metric-grid { grid-template-columns: repeat(2, 1fr); }
