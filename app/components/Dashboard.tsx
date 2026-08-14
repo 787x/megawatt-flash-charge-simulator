@@ -363,7 +363,9 @@ export function Dashboard() {
   const pileRequestedPowerKw = connectorA.requestedPowerKw + connectorB.requestedPowerKw;
   const busLoadPowerKw = state.chargingPowerKw + config.baseLoadKw;
   const storageFlowPowerKw = Math.abs(state.storage.powerKw);
-  const storageFlowOperator = state.storage.powerKw < 0 ? "−" : "+";
+  const storageFlowDirection = state.storage.powerKw > 0 ? "←" : state.storage.powerKw < 0 ? "→" : "—";
+  const storageFlowLabel = state.storage.powerKw > 0 ? "储能送入母线" : state.storage.powerKw < 0 ? "母线向储能充电" : "储能待机";
+  const storageStateLabel = state.storage.powerKw > 0 ? "放电" : state.storage.powerKw < 0 ? "充电" : "待机";
   const aConnectorVehicle = state.vehicles.find((vehicle) => vehicle.id === connectorA.currentVehicleId);
   const stationNoticeActive = activeLimit || state.gridControl.mode !== "normal" || (!connectorB.currentVehicleId && connectorB.turnoverRemainingSec <= 0 && standardWaiting > 0 && flashWaiting === 0) || (aConnectorVehicle?.chargingClass === "flash_capable" && standardWaiting > 0);
   const visibleQueueIds = queueExpanded ? state.queue : state.queue.slice(0, queuePreviewLimit);
@@ -594,12 +596,12 @@ export function Dashboard() {
 
         <section ref={stationPanelRef} className="station-panel panel">
           <div className="panel-title station-title"><div><h2>01# 兆瓦闪充站 · 双枪作业</h2></div><div className="station-status"><span className={activeLimit || state.gridControl.mode !== "normal" ? "warning-text" : "ok-text"}>{state.gridControl.mode === "outage" ? "电网断电 · 储能支撑" : state.gridControl.mode === "limited" ? `电网临时限至 ${effectiveGridLimit}kW` : activeLimit ? "功率受限" : "运行正常"}</span><small>T+{formatTime(state.timeSec)}</small></div></div>
-          <div className="energy-summary" aria-label="电网、储能与直流母线功率关系">
-            <div className={`energy-summary-item grid-node ${state.gridControl.mode}`}><span>电网输入</span><strong>{Math.round(state.gridPowerKw).toLocaleString("zh-CN")}<small>kW</small></strong><p>{gridStatusLabel} · 上限 {Math.round(effectiveGridLimit).toLocaleString("zh-CN")}</p></div>
-            <span className="energy-operator">{storageFlowOperator}</span>
-            <div className="energy-summary-item storage-node"><span>储能</span><strong>{Math.round(storageFlowPowerKw).toLocaleString("zh-CN")}<small>kW</small></strong><p>{state.storage.powerKw > 0 ? "放电并入" : state.storage.powerKw < 0 ? "充电吸收" : "待机"} · {storageSoc.toFixed(1)}% SOC</p></div>
-            <span className="energy-operator">=</span>
-            <div className="energy-summary-item bus-node"><span>直流母线负载</span><strong>{Math.round(busLoadPowerKw).toLocaleString("zh-CN")}<small>kW</small></strong><p>车辆 {Math.round(state.chargingPowerKw).toLocaleString("zh-CN")} · 基础 {config.baseLoadKw}</p></div>
+          <div className="energy-summary" aria-label="电网、直流母线与储能功率流向">
+            <article className={`energy-summary-item grid-node ${state.gridControl.mode}`}><span className="energy-node-mark">电网</span><div><span className="energy-node-label">电网输入</span><strong>{Math.round(state.gridPowerKw).toLocaleString("zh-CN")}<small>kW</small></strong><p>{gridStatusLabel} · 上限 {Math.round(effectiveGridLimit).toLocaleString("zh-CN")}</p></div></article>
+            <div className={`energy-flow-line ${state.gridPowerKw > 0 ? "active" : ""}`} aria-label={`电网向母线输入 ${Math.round(state.gridPowerKw).toLocaleString("zh-CN")} kW`}><span aria-hidden="true">→</span><small>送入母线</small><b>{Math.round(state.gridPowerKw).toLocaleString("zh-CN")} kW</b></div>
+            <article className="energy-summary-item bus-node"><span className="energy-node-mark">母线</span><div><span className="energy-node-label">直流母线</span><strong>{Math.round(busLoadPowerKw).toLocaleString("zh-CN")}<small>kW</small></strong><p>车辆 {Math.round(state.chargingPowerKw).toLocaleString("zh-CN")} · 基础 {config.baseLoadKw}</p></div></article>
+            <div className={`energy-flow-line storage-flow ${state.storage.powerKw !== 0 ? "active" : ""}`} aria-label={`${storageFlowLabel} ${Math.round(storageFlowPowerKw).toLocaleString("zh-CN")} kW`}><span aria-hidden="true">{storageFlowDirection}</span><small>{storageFlowLabel}</small><b>{Math.round(storageFlowPowerKw).toLocaleString("zh-CN")} kW</b></div>
+            <article className="energy-summary-item storage-node"><span className="energy-node-mark">储能</span><div><span className="energy-node-label">储能系统</span><strong>{storageSoc.toFixed(1)}<small>% SOC</small></strong><p>{storageStateLabel}{state.storage.powerKw !== 0 ? ` ${Math.round(storageFlowPowerKw).toLocaleString("zh-CN")} kW` : ""} · {state.storage.energyKWh.toFixed(1)} kWh</p></div></article>
           </div>
 
           <div className="station-workspace">
