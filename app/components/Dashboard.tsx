@@ -27,7 +27,8 @@ import type {
 
 const speedOptions = [1, 5, 10, 30, 60, 120, 300];
 const sampleOptions = [1, 5, 10, 30, 60];
-const queuePreviewLimit = 6;
+const minimumQueuePreview = 6;
+const queueCellMinWidth = 92;
 const tabs = ["车辆列表", "事件日志", "运营分析", "充电曲线", "参数来源"] as const;
 type Tab = typeof tabs[number];
 
@@ -262,7 +263,9 @@ export function Dashboard() {
   const [manual, setManual] = useState({ chargingClass: "flash_capable" as VehicleChargingClass, capacity: 112, maxPower: 1500, initialSoc: 20, targetSoc: 80, quantity: 1 });
   const [gridLimitDraft, setGridLimitDraft] = useState(500);
   const [queueExpanded, setQueueExpanded] = useState(false);
+  const [queuePreviewLimit, setQueuePreviewLimit] = useState(minimumQueuePreview);
   const importRef = useRef<HTMLInputElement>(null);
+  const queueListRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const savedTheme = localStorage.getItem("flash-sim-theme");
@@ -307,7 +310,20 @@ export function Dashboard() {
 
   useEffect(() => {
     if (state.queue.length <= queuePreviewLimit) setQueueExpanded(false);
-  }, [state.queue.length]);
+  }, [queuePreviewLimit, state.queue.length]);
+
+  useEffect(() => {
+    const list = queueListRef.current;
+    if (!list) return;
+    const updatePreviewLimit = () => {
+      const columnCount = Math.max(minimumQueuePreview + 1, Math.floor(list.clientWidth / queueCellMinWidth));
+      setQueuePreviewLimit(columnCount - 1);
+    };
+    updatePreviewLimit();
+    const observer = new ResizeObserver(updatePreviewLimit);
+    observer.observe(list);
+    return () => observer.disconnect();
+  }, []);
 
   const connectors = state.piles.flatMap((pile) => pile.connectors);
   const connectorA = connectors.find((item) => item.role === "universal")!;
@@ -577,7 +593,7 @@ export function Dashboard() {
             </section>
             <section className="queue-zone" aria-label="车辆等候队列">
               <div className="queue-label"><div><strong>等候队列</strong><span>单一全局队列 · 按现有调度策略分配</span></div><p><strong>{state.queue.length}</strong> 辆 · 闪充 {flashWaiting} · 普通 {standardWaiting}</p></div>
-              <div className={`queue-list ${queueExpanded ? "expanded" : ""}`} id="station-queue-list">{visibleQueueIds.map((id, index) => { const vehicle = state.vehicles.find((item) => item.id === id)!; const estimate = estimateVehicleWaitTime(id, state, config); const eligibility = vehicle.chargingClass === "flash_capable" ? "闪充 · A/B" : "普通 · 仅 A"; return <button className="queue-item" key={id} title={`${vehicle.id} · ${vehicle.chargingClass === "flash_capable" ? "闪充兼容，可用 A / B" : "普通直流，仅可用 A"} · 预计等待 ${formatDuration(estimate.expectedWaitSec)}`} onClick={() => setSelectedVehicle(vehicle)}><span>{String(index + 1).padStart(2, "0")}</span><div><strong>{vehicle.id}</strong><small>{eligibility}</small></div><em>约 {formatDuration(estimate.expectedWaitSec)}</em></button>; })}{state.queue.length === 0 && <span className="empty-queue">当前没有等待车辆</span>}{hiddenQueueCount > 0 && <button className="queue-more" aria-expanded={queueExpanded} aria-controls="station-queue-list" onClick={() => setQueueExpanded((value) => !value)}>{queueExpanded ? <><strong>收起队列</strong><small>保留前 {queuePreviewLimit} 辆</small></> : <><strong>另有 {hiddenQueueCount} 辆</strong><small>展开全部</small></>}</button>}</div>
+              <div ref={queueListRef} className={`queue-list ${queueExpanded ? "expanded" : ""}`} id="station-queue-list">{visibleQueueIds.map((id, index) => { const vehicle = state.vehicles.find((item) => item.id === id)!; const estimate = estimateVehicleWaitTime(id, state, config); const eligibility = vehicle.chargingClass === "flash_capable" ? "闪充 · A/B" : "普通 · 仅 A"; return <button className="queue-item" key={id} title={`${vehicle.id} · ${vehicle.chargingClass === "flash_capable" ? "闪充兼容，可用 A / B" : "普通直流，仅可用 A"} · 预计等待 ${formatDuration(estimate.expectedWaitSec)}`} onClick={() => setSelectedVehicle(vehicle)}><span>{String(index + 1).padStart(2, "0")}</span><div><strong>{vehicle.id}</strong><small>{eligibility}</small></div><em>约 {formatDuration(estimate.expectedWaitSec)}</em></button>; })}{state.queue.length === 0 && <span className="empty-queue">当前没有等待车辆</span>}{hiddenQueueCount > 0 && <button className="queue-more" aria-expanded={queueExpanded} aria-controls="station-queue-list" onClick={() => setQueueExpanded((value) => !value)}>{queueExpanded ? <><strong>收起队列</strong><small>保留前 {queuePreviewLimit} 辆</small></> : <><strong>另有 {hiddenQueueCount} 辆</strong><small>展开全部</small></>}</button>}</div>
               <div className={`station-diagnostic ${stationNoticeActive ? "active" : ""}`}><span>{stationNoticeActive ? "需关注" : "调度正常"}</span><p>{diagnostics}</p></div>
             </section>
           </div>
