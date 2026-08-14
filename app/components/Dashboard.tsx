@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { TrendCanvas } from "./TrendCanvas";
 import {
   addManualVehicle,
@@ -264,8 +264,10 @@ export function Dashboard() {
   const [gridLimitDraft, setGridLimitDraft] = useState(500);
   const [queueExpanded, setQueueExpanded] = useState(false);
   const [queuePreviewLimit, setQueuePreviewLimit] = useState(minimumQueuePreview);
+  const [stationCollapsedHeight, setStationCollapsedHeight] = useState(0);
   const importRef = useRef<HTMLInputElement>(null);
   const queueListRef = useRef<HTMLDivElement>(null);
+  const stationPanelRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     const savedTheme = localStorage.getItem("flash-sim-theme");
@@ -324,6 +326,22 @@ export function Dashboard() {
     observer.observe(list);
     return () => observer.disconnect();
   }, []);
+
+  useEffect(() => {
+    if (queueExpanded) return;
+    const panel = stationPanelRef.current;
+    if (!panel) return;
+    const updateStationHeight = () => {
+      const panelStyle = window.getComputedStyle(panel);
+      const borderHeight = Number.parseFloat(panelStyle.borderTopWidth) + Number.parseFloat(panelStyle.borderBottomWidth);
+      const contentHeight = Array.from(panel.children).reduce((height, child) => height + child.getBoundingClientRect().height, 0);
+      setStationCollapsedHeight(Math.ceil(contentHeight + borderHeight));
+    };
+    updateStationHeight();
+    const observer = new ResizeObserver(updateStationHeight);
+    Array.from(panel.children).forEach((child) => observer.observe(child));
+    return () => observer.disconnect();
+  }, [queueExpanded]);
 
   const connectors = state.piles.flatMap((pile) => pile.connectors);
   const connectorA = connectors.find((item) => item.role === "universal")!;
@@ -482,7 +500,7 @@ export function Dashboard() {
 
       <div className="model-disclaimer">本项目为非官方仿真工具。部分预设参数根据公开资料整理或拟合，仅用于技术演示，不代表厂商实际控制策略或设备性能承诺。</div>
 
-      <main className="dashboard-grid">
+      <main className={`dashboard-grid ${queueExpanded ? "queue-expanded" : "queue-collapsed"}`} style={{ "--station-row-height": stationCollapsedHeight ? `${stationCollapsedHeight}px` : undefined } as CSSProperties}>
         <section className="trend-overview panel">
           <div className="trend-overview-head">
             <div><h2>站点实时曲线</h2><p>电网、储能与车辆功率的最近 30 分钟变化</p></div>
@@ -574,7 +592,7 @@ export function Dashboard() {
           </details>
         </aside>
 
-        <section className="station-panel panel">
+        <section ref={stationPanelRef} className="station-panel panel">
           <div className="panel-title station-title"><div><h2>01# 兆瓦闪充站 · 双枪作业</h2></div><div className="station-status"><span className={activeLimit || state.gridControl.mode !== "normal" ? "warning-text" : "ok-text"}>{state.gridControl.mode === "outage" ? "电网断电 · 储能支撑" : state.gridControl.mode === "limited" ? `电网临时限至 ${effectiveGridLimit}kW` : activeLimit ? "功率受限" : "运行正常"}</span><small>T+{formatTime(state.timeSec)}</small></div></div>
           <div className="energy-summary" aria-label="电网、储能与直流母线功率关系">
             <div className={`energy-summary-item grid-node ${state.gridControl.mode}`}><span>电网输入</span><strong>{Math.round(state.gridPowerKw).toLocaleString("zh-CN")}<small>kW</small></strong><p>{gridStatusLabel} · 上限 {Math.round(effectiveGridLimit).toLocaleString("zh-CN")}</p></div>
