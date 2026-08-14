@@ -47,14 +47,14 @@
 * { box-sizing: border-box; }
 html { background: var(--bg); color-scheme: dark; }
 html[data-theme="light"] { color-scheme: light; }
-body { margin: 0; background: var(--bg); color: var(--text); font-family: Inter, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+body { margin: 0; overflow: hidden; background: var(--bg); color: var(--text); font-family: Inter, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
 button, input, select { font: inherit; }
 button, select, input { color: var(--text); }
 button { cursor: pointer; }
 button:focus-visible, select:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
 
-.app-shell { min-height: 100vh; background: radial-gradient(circle at 52% 18%, rgba(59, 117, 119, .08), transparent 26%), var(--bg); }
-.topbar { min-height: 76px; padding: 10px 18px; display: grid; grid-template-columns: minmax(325px, 1fr) auto minmax(560px, 1.45fr); gap: 18px; align-items: center; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--bg-soft) 96%, transparent); position: sticky; top: 0; z-index: 30; backdrop-filter: blur(14px); }
+.app-shell { height: 100vh; height: 100dvh; min-height: 0; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; overflow: hidden; background: radial-gradient(circle at 52% 18%, rgba(59, 117, 119, .08), transparent 26%), var(--bg); }
+.topbar { min-height: 76px; padding: 10px 18px; display: grid; grid-template-columns: minmax(340px, .85fr) 122px minmax(0, 2fr); gap: 10px; align-items: center; overflow: hidden; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--bg-soft) 96%, transparent); position: sticky; top: 0; z-index: 30; backdrop-filter: blur(14px); }
 .brand-block, .toolbar, .energy-strip, .connector-head, .pile-card header, .pile-card footer, .queue-label, .panel-title, .station-status, .chart-legend, .curve-head, .app-footer { display: flex; align-items: center; }
 .brand-block { gap: 12px; min-width: 0; }
 .brand-mark { width: 38px; height: 38px; display: grid; place-items: center; color: #0a1a18; background: var(--cyan); clip-path: polygon(22% 0, 100% 0, 78% 100%, 0 100%); font-size: 19px; }
@@ -64,7 +64,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, summary:focus-v
 .clock-block { text-align: center; min-width: 122px; }
 .clock-block span { display: block; font: 9px/1.4 Consolas, monospace; color: var(--muted); letter-spacing: .1em; }
 .clock-block strong { font: 20px/1.1 Consolas, monospace; color: var(--cyan); }
-.toolbar { gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+.toolbar { min-width: 0; gap: 6px; justify-content: flex-end; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }
 .toolbar button, .toolbar > select, .tabs button, .curve-head button, .wide-button, .confirm-actions button { border: 1px solid var(--line); background: var(--panel); min-height: 34px; padding: 7px 10px; font-size: 11px; transition: border-color .2s, background .2s, transform .2s; }
 .toolbar button:hover, .tabs button:hover, .curve-head button:hover, .wide-button:hover { border-color: var(--cyan); background: var(--cyan-soft); }
 .toolbar button:active, .wide-button:active { transform: translateY(1px); }
@@ -75,13 +75,16 @@ button:focus-visible, select:focus-visible, input:focus-visible, summary:focus-v
 .scenario-select select { border: 0; min-height: 32px; max-width: 150px; }
 .model-disclaimer { padding: 6px 18px; font-size: 10px; color: var(--muted); border-bottom: 1px solid var(--line); text-align: center; background: color-mix(in srgb, var(--amber) 4%, var(--bg)); }
 
-.dashboard-grid { display: grid; grid-template-columns: minmax(250px, 17vw) minmax(570px, 1fr) minmax(250px, 18vw); grid-template-areas: "trend trend trend" "config station metrics" "data data data"; gap: 10px; padding: 10px; align-items: start; }
+.dashboard-grid { min-width: 0; min-height: 0; display: grid; grid-template-columns: clamp(260px, 19vw, 290px) minmax(0, 1fr) clamp(280px, 21vw, 310px); grid-template-rows: minmax(0, 1fr) clamp(190px, 25vh, 260px); grid-template-areas: "config station metrics" "config dock dock"; gap: 10px; padding: 10px; overflow: hidden; }
 .panel { border: 1px solid var(--line); background: var(--panel); box-shadow: var(--shadow); min-width: 0; }
-.trend-overview { grid-area: trend; }
-.config-panel { grid-area: config; }
-.station-panel { grid-area: station; }
-.metrics-panel { grid-area: metrics; }
-.data-panel { grid-area: data; }
+.config-panel { grid-area: config; min-height: 0; overflow: auto; }
+.station-panel { grid-area: station; min-height: 0; overflow: auto; }
+.metrics-panel { grid-area: metrics; min-height: 0; overflow: auto; }
+.analysis-dock { grid-area: dock; min-width: 0; min-height: 0; display: grid; grid-template-columns: minmax(0, 1.12fr) minmax(0, 1fr); gap: 10px; overflow: hidden; }
+.analysis-dock > .panel { min-height: 0; height: 100%; overflow: auto; }
+.analysis-dock .trend-dashboard { grid-template-columns: minmax(0, 1.6fr) minmax(250px, .9fr); }
+.analysis-dock .data-panel { min-height: 0; display: flex; flex-direction: column; }
+.analysis-dock .data-panel .tab-content { min-height: 0; flex: 1 1 auto; overflow: auto; }
 .panel-title { justify-content: space-between; gap: 10px; padding: 13px 14px; min-height: 57px; border-bottom: 1px solid var(--line); }
 .panel-title h2, .chart-copy h3, .curve-head h3, .source-intro h3 { margin: 2px 0 0; font-size: 14px; }
 .live-pill { font: 9px Consolas, monospace; color: var(--green); }
@@ -358,26 +361,33 @@ tbody tr:hover { background: var(--cyan-soft); }
 .toast { position: fixed; right: 18px; bottom: 18px; z-index: 100; max-width: 380px; padding: 11px 15px; border: 1px solid var(--cyan); background: var(--panel); color: var(--text); box-shadow: var(--shadow); font-size: 11px; }
 
 @media (max-width: 1280px) {
-  .topbar { grid-template-columns: 1fr auto; }
-  .clock-block { display: none; }
-  .toolbar { grid-column: 1 / -1; justify-content: flex-start; }
-  .dashboard-grid { grid-template-columns: 260px minmax(540px, 1fr); grid-template-areas: "trend trend" "config station" "metrics metrics" "data data"; }
-  .metrics-panel .metric-grid { grid-template-columns: repeat(4, 1fr); }
-  .metrics-panel { display: grid; grid-template-columns: 1fr 2fr 1fr 1fr; }
-  .metrics-panel > .panel-title { border-right: 1px solid var(--line); }
-  .utilization-panel, .limit-card { margin-top: 10px; }
+  .topbar { grid-template-columns: minmax(330px, .85fr) 112px minmax(0, 2fr); padding-inline: 12px; }
+  .toolbar { gap: 4px; }
+  .toolbar button, .toolbar > select { padding-inline: 8px; }
+  .scenario-select select { max-width: 130px; }
+  .dashboard-grid { grid-template-columns: clamp(238px, 19vw, 260px) minmax(0, 1fr) clamp(250px, 21vw, 280px); }
+  .analysis-dock { grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr); }
+  .analysis-dock .trend-dashboard { grid-template-columns: minmax(0, 1.55fr) minmax(210px, .85fr); }
+}
+
+@media (max-height: 850px) and (min-width: 901px) {
+  .app-shell { grid-template-rows: auto auto minmax(0, 1fr); }
+  .dashboard-grid { grid-template-rows: minmax(0, 1fr) 180px; }
+  .app-footer { display: none; }
 }
 
 @media (max-width: 900px) {
+  body { overflow: auto; }
+  .app-shell { height: auto; min-height: 100vh; display: block; overflow: visible; }
   .topbar { position: static; display: flex; flex-direction: column; align-items: stretch; }
   .brand-block { flex-wrap: wrap; }
   .toolbar { justify-content: flex-start; }
-  .dashboard-grid { display: flex; flex-direction: column; padding: 7px; }
-  .trend-overview { order: 0; width: 100%; }
+  .dashboard-grid { display: flex; flex-direction: column; padding: 7px; overflow: visible; }
   .station-panel { order: 1; width: 100%; }
   .metrics-panel { order: 2; width: 100%; display: block; }
   .config-panel { order: 3; width: 100%; }
-  .data-panel { order: 4; width: 100%; }
+  .analysis-dock { order: 4; width: 100%; display: flex; flex-direction: column; overflow: visible; }
+  .analysis-dock > .panel { width: 100%; height: auto; overflow: visible; }
   .trend-overview-head { align-items: stretch; flex-direction: column; }
   .trend-dashboard { grid-template-columns: 1fr; }
   .metrics-panel .metric-grid { grid-template-columns: repeat(2, 1fr); }
