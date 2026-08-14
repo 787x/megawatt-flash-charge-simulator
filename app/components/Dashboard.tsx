@@ -62,7 +62,7 @@ const queuePolicyNames: Record<SimulationConfig["queuePolicy"], string> = {
 };
 
 function formatPower(value: number) {
-  return `${Math.round(value).toLocaleString("zh-CN")} kW`;
+  return `${Math.round(value).toLocaleString("zh-CN")}\u00A0kW`;
 }
 
 function formatTime(seconds: number) {
@@ -148,7 +148,7 @@ function ConnectorBay({ connector, state, config, onVehicle }: { connector: Conn
 function ParameterRow({ label, value, min, max, step = 1, unit, onChange }: { label: string; value: number; min: number; max: number; step?: number; unit: string; onChange: (value: number) => void }) {
   return (
     <label className="parameter-row">
-      <span>{label}<output>{value}{unit}</output></span>
+      <span>{label}<output><strong>{value}</strong><small>{unit}</small></output></span>
       <input type="range" value={value} min={min} max={max} step={step} onChange={(event) => onChange(Number(event.target.value))} />
     </label>
   );
@@ -342,24 +342,28 @@ export function Dashboard() {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <div className="brand-block">
-          <span className="brand-mark" aria-hidden="true">⚡</span>
-          <div><h1>兆瓦闪充站运营模拟器</h1><span>MEGAWATT CHARGING OPS LAB</span></div>
-          <span className="unofficial-badge">非官方仿真工具</span>
-        </div>
-        <div className="clock-block" aria-live="polite"><span>SIM TIME · 2026-07-23</span><strong>{formatTime(state.timeSec + 8 * 3600)}</strong></div>
-        <div className="toolbar">
+        <div className="product-context">
+          <div className="brand-block"><h1>兆瓦闪充站仿真</h1></div>
           <label className="scenario-select"><span>场景</span><select value={config.scenarioName} onChange={(event) => selectScenario(event.target.value)}>{Object.keys(scenarioPresets).map((name) => <option key={name}>{name}</option>)}</select></label>
-          <button className="primary-action" onClick={() => setRunning((value) => !value)}>{running ? "Ⅱ 暂停" : "▶ 继续"}</button>
-          <button onClick={() => setState((current) => stepSimulation(current, config, 1))} disabled={running}>单步</button>
-          <select aria-label="仿真速度" value={speed} onChange={(event) => setSpeed(Number(event.target.value))}>{speedOptions.map((value) => <option value={value} key={value}>{value}×</option>)}</select>
-          <button aria-label="调整趋势采样间隔" title="点击切换趋势采样间隔" onClick={() => { const currentIndex = sampleOptions.indexOf(config.historySampleSec ?? 5); updateConfig("historySampleSec", sampleOptions[(currentIndex + 1) % sampleOptions.length]); }}>采样 {config.historySampleSec ?? 5}s</button>
-          <button onClick={() => setShowReset(true)}>重置</button>
-          <button onClick={() => { localStorage.setItem(`flash-sim-saved-${config.scenarioName}`, JSON.stringify(config)); setToast("场景已保存到本机"); }}>保存</button>
-          <button onClick={() => importRef.current?.click()}>导入</button>
-          <button onClick={exportScenario}>导出</button>
-          <button onClick={() => setTheme((value) => value === "dark" ? "light" : "dark")} aria-label="切换深浅主题">{theme === "dark" ? "浅色" : "深色"}</button>
-          <button onClick={() => setShowHelp(true)} aria-label="打开帮助">?</button>
+        </div>
+        <div className="simulation-status" aria-live="polite">
+          <span className={`run-state ${running ? "running" : "paused"}`}>{running ? "运行中" : "已暂停"}</span>
+          <div className="clock-block"><span>仿真时间</span><strong>{formatTime(state.timeSec + 8 * 3600)}</strong></div>
+        </div>
+        <div className="transport-controls" role="group" aria-label="仿真控制">
+          <button className="primary-action" onClick={() => setRunning((value) => !value)}>{running ? "暂停" : "继续"}</button>
+          <button className="secondary-action" onClick={() => setState((current) => stepSimulation(current, config, 1))} disabled={running}>单步</button>
+          <label className="speed-control"><span>速度</span><select aria-label="仿真速度" value={speed} onChange={(event) => setSpeed(Number(event.target.value))}>{speedOptions.map((value) => <option value={value} key={value}>{value}×</option>)}</select></label>
+        </div>
+        <div className="scenario-actions" role="group" aria-label="场景管理">
+          <button className="secondary-action" onClick={() => { localStorage.setItem(`flash-sim-saved-${config.scenarioName}`, JSON.stringify(config)); setToast("场景已保存到本机"); }}>保存</button>
+          <button className="secondary-action" onClick={() => importRef.current?.click()}>导入</button>
+          <button className="secondary-action" onClick={exportScenario}>导出</button>
+          <button className="danger-action" onClick={() => setShowReset(true)}>重置</button>
+        </div>
+        <div className="utility-actions" role="group" aria-label="显示与帮助">
+          <button className="quiet-action" onClick={() => setTheme((value) => value === "dark" ? "light" : "dark")} aria-label="切换深浅主题">{theme === "dark" ? "浅色" : "深色"}</button>
+          <button className="quiet-action" onClick={() => setShowHelp(true)}>帮助</button>
           <input ref={importRef} hidden type="file" accept="application/json,.json" onChange={(event) => importScenario(event.target.files?.[0])} />
         </div>
       </header>
@@ -369,14 +373,14 @@ export function Dashboard() {
       <main className="dashboard-grid">
         <section className="trend-overview panel">
           <div className="trend-overview-head">
-            <div><span>LIVE TREND OVERVIEW · {config.historySampleSec ?? 5} 秒采样</span><h2>站点实时曲线</h2><p>功率与储能电量放到首屏，先判断供能状态，再下钻查看车位、队列与车辆。</p></div>
-            <div className="trend-kpis"><span>车辆<strong>{formatPower(state.chargingPowerKw)}</strong></span><span>储能<strong>{state.storage.energyKWh.toFixed(1)} kWh</strong></span><span>队列<strong>{state.queue.length} 辆</strong></span><span>电网<strong>{gridStatusLabel}</strong></span></div>
+            <div><h2>站点实时曲线</h2><p>电网、储能与车辆功率的最近 30 分钟变化</p></div>
+            <div className="trend-overview-actions"><button className="trend-sample-control" aria-label="调整趋势采样间隔" title="点击切换趋势采样间隔" onClick={() => { const currentIndex = sampleOptions.indexOf(config.historySampleSec ?? 5); updateConfig("historySampleSec", sampleOptions[(currentIndex + 1) % sampleOptions.length]); }}>采样间隔 <strong>{config.historySampleSec ?? 5}</strong><span>s</span></button><div className="trend-kpis"><span>车辆<strong>{formatPower(state.chargingPowerKw)}</strong></span><span>储能<strong>{state.storage.energyKWh.toFixed(1)} kWh</strong></span><span>队列<strong>{state.queue.length} 辆</strong></span><span>电网<strong>{gridStatusLabel}</strong></span></div></div>
           </div>
           <TrendCanvas history={state.history} storageCapacityKWh={state.storage.capacityKWh} storageMinSocPercent={state.storage.minSocPercent} currentStorageEnergyKWh={state.storage.energyKWh} currentStorageSocPercent={storageSoc} sampleIntervalSec={config.historySampleSec ?? 5} />
         </section>
 
         <aside className="config-panel panel">
-          <div className="panel-title"><div><span>SIMULATION INPUTS</span><h2>站点参数</h2></div><span className="live-pill">● LIVE</span></div>
+          <div className="panel-title"><div><h2>站点参数</h2></div><span className="live-pill">实时</span></div>
           <details open>
             <summary><span>01</span>电网与母线<small>{formatPower(config.gridMaxPowerKw)}</small></summary>
             <div className="detail-body">
@@ -425,7 +429,7 @@ export function Dashboard() {
         </aside>
 
         <section className="station-panel panel">
-          <div className="panel-title station-title"><div><span>LIVE SITE TOPOLOGY</span><h2>01# 兆瓦闪充站 · 能量流</h2></div><div className="station-status"><span className={activeLimit || state.gridControl.mode !== "normal" ? "warning-text" : "ok-text"}>{state.gridControl.mode === "outage" ? "● 电网断电 · 储能支撑" : state.gridControl.mode === "limited" ? `● 电网临时限至 ${effectiveGridLimit}kW` : activeLimit ? "● 功率受限" : "● 系统正常"}</span><small>更新于 T+{formatTime(state.timeSec)}</small></div></div>
+          <div className="panel-title station-title"><div><h2>01# 兆瓦闪充站 · 能量流</h2></div><div className="station-status"><span className={activeLimit || state.gridControl.mode !== "normal" ? "warning-text" : "ok-text"}>{state.gridControl.mode === "outage" ? "电网断电 · 储能支撑" : state.gridControl.mode === "limited" ? `电网临时限至 ${effectiveGridLimit}kW` : activeLimit ? "功率受限" : "系统正常"}</span><small>更新于 T+{formatTime(state.timeSec)}</small></div></div>
           <div className="energy-strip">
             <article className={`energy-node grid-node ${state.gridControl.mode}`}><span className="node-icon">{state.gridControl.mode === "outage" ? "断电" : "电网"}</span><div><small>GRID INPUT · {gridStatusLabel}</small><strong>{formatPower(state.gridPowerKw)}</strong><p>有效上限 {Math.round(effectiveGridLimit)} kW · 使用 {effectiveGridLimit ? Math.round(state.gridPowerKw / effectiveGridLimit * 100) : 0}%</p></div></article>
             <div className={`flow-line ${state.gridPowerKw > 0 ? "active" : ""}`}><span>→</span><b>{formatPower(state.gridPowerKw)}</b></div>
@@ -453,7 +457,7 @@ export function Dashboard() {
         </section>
 
         <aside className="metrics-panel panel">
-          <div className="panel-title"><div><span>STATION PULSE</span><h2>实时运营</h2></div><span className="sign-rule">储能 +放 / −充</span></div>
+          <div className="panel-title"><div><h2>实时运营</h2></div><span className="sign-rule">储能 +放 / −充</span></div>
           <div className="metric-grid" aria-live="polite">
             <MetricCard label="站端输出" value={formatPower(state.chargingPowerKw)} note={`峰值上限 ${config.stationBusMaxPowerKw}kW`} accent="amber" />
             <MetricCard label="电网功率" value={formatPower(state.gridPowerKw)} note={`${gridStatusLabel} · 余量 ${Math.max(0, effectiveGridLimit - state.gridPowerKw).toFixed(0)}kW`} accent={state.gridControl.mode === "outage" ? "red" : "blue"} />
