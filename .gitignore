@@ -49,7 +49,6 @@ next-env.d.ts
 # 忽略指定文件
 .env
 debug.log
-AGENTS.md
 
 # 忽略所有日志文件
 *.log
