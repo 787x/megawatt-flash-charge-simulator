@@ -22,6 +22,7 @@ import type {
   SimulationState,
   Vehicle,
   VehicleChargingClass,
+  PowerLimitReason,
 } from "../simulation/types";
 
 const speedOptions = [1, 5, 10, 30, 60, 120, 300];
@@ -59,6 +60,20 @@ const queuePolicyNames: Record<SimulationConfig["queuePolicy"], string> = {
   shortest_expected_session: "最短会话优先",
   lowest_soc_first: "低 SOC 优先",
   weighted_wait_time: "加权等待时间",
+};
+
+const limitReasonNames: Record<PowerLimitReason, string> = {
+  none: "无",
+  vehicle_curve: "车辆充电曲线",
+  vehicle_max_power: "车辆功率上限",
+  connector_max_power: "枪口功率上限",
+  connector_policy_cap: "枪口策略上限",
+  pile_aggregate_limit: "整桩共享上限",
+  pile_allocation_policy: "桩内分配策略",
+  station_power_limit: "站级可用功率",
+  grid_power_limit: "电网功率上限",
+  storage_discharge_limit: "储能放电能力",
+  storage_soc_floor: "储能最低 SOC",
 };
 
 function formatPower(value: number) {
@@ -116,31 +131,40 @@ function VehicleGlyph({ vehicle, compact = false, onClick }: { vehicle: Vehicle;
 function ConnectorBay({ connector, state, config, onVehicle }: { connector: Connector; state: SimulationState; config: SimulationConfig; onVehicle: (vehicle: Vehicle) => void }) {
   const vehicle = state.vehicles.find((item) => item.id === connector.currentVehicleId);
   const isTurnover = !vehicle && connector.turnoverRemainingSec > 0;
-  const isIncompatibleIdle = connector.role === "flash_dedicated" && !vehicle && !isTurnover && state.queue.some((id) => state.vehicles.find((item) => item.id === id)?.chargingClass === "standard_dc");
+  const standardWaiting = state.queue.filter((id) => state.vehicles.find((item) => item.id === id)?.chargingClass === "standard_dc").length;
+  const flashWaiting = state.queue.length - standardWaiting;
+  const isIncompatibleIdle = connector.role === "flash_dedicated" && !vehicle && !isTurnover && standardWaiting > 0 && flashWaiting === 0;
   const isLimited = connector.requestedPowerKw > connector.actualPowerKw + 1;
   const remainingChargeSec = vehicle ? estimateRemainingChargeTime(vehicle) : 0;
+  const limitLabels = vehicle?.limitReasons.filter((reason) => reason !== "none").map((reason) => limitReasonNames[reason]) ?? [];
+  const roleName = connector.role === "universal" ? "通用枪" : "闪充专用枪";
+  const eligibility = connector.role === "universal" ? "闪充兼容 / 普通直流" : "仅闪充兼容车辆";
   return (
-    <article className={`connector-bay ${connector.role} ${isIncompatibleIdle ? "incompatible" : ""} ${isTurnover ? "turnover" : ""}`}>
+    <article className={`connector-bay ${connector.role} ${isIncompatibleIdle ? "incompatible" : ""} ${isTurnover ? "turnover" : ""} ${isLimited ? "limited" : ""}`}>
       <div className="connector-head">
         <div>
           <span className="connector-letter">{connector.role === "universal" ? "A" : "B"}</span>
-          <strong>{connector.role === "universal" ? "通用枪" : "闪充专用枪"}</strong>
+          <span className="connector-identity"><strong>{roleName}</strong><small>{eligibility}</small></span>
         </div>
-        <span className={`state-dot ${vehicle ? "busy" : isTurnover || isIncompatibleIdle ? "warn" : "idle"}`}>
+        <span className={`state-dot ${isLimited ? "warn" : vehicle ? "busy" : isTurnover || isIncompatibleIdle ? "warn" : "idle"}`}>
           {vehicle ? statusNames[vehicle.status] : isTurnover ? "换车中" : isIncompatibleIdle ? "不兼容空闲" : "空闲"}
         </span>
       </div>
-      <p>{connector.role === "universal" ? "闪充车 / 普通车均可" : "仅闪充兼容车辆"}</p>
-      <div className="bay-power">
-        <strong>{formatPower(connector.actualPowerKw)}</strong>
-        <span>请求 {Math.round(connector.requestedPowerKw)} kW</span>
+      <div className="connector-power-grid">
+        <div className="primary-reading"><span>实际功率</span><strong>{Math.round(connector.actualPowerKw).toLocaleString("zh-CN")}<small>kW</small></strong></div>
+        <div><span>请求功率</span><strong>{Math.round(connector.requestedPowerKw).toLocaleString("zh-CN")}<small>kW</small></strong></div>
       </div>
-      <div className="parking-slot">
-        {vehicle ? <div className="vehicle-slot-content"><VehicleGlyph vehicle={vehicle} onClick={() => onVehicle(vehicle)} /><strong className="bay-eta">预计剩余 {formatDuration(remainingChargeSec)}</strong></div> : <span>{isTurnover ? `车位周转 · ${formatDuration(connector.turnoverRemainingSec)}` : isIncompatibleIdle ? "普通车不可进入" : "等待车辆"}</span>}
-      </div>
-      {vehicle?.chargingClass === "flash_capable" && connector.role === "universal" && <span className="inline-note">兼容使用通用枪</span>}
-      {isLimited && <span className="inline-note warning">整桩共享功率限制</span>}
-      {isTurnover && <span className="inline-note warning">下一辆车将在周转结束后进位 · 默认 {formatDuration(config.turnoverSec)}</span>}
+      {vehicle ? <div className="vehicle-session">
+        <VehicleGlyph vehicle={vehicle} onClick={() => onVehicle(vehicle)} />
+        <div className="vehicle-session-data">
+          <div className="vehicle-session-head"><div><strong>{vehicle.id}</strong><span>{vehicle.chargingClass === "flash_capable" ? "闪充兼容" : "普通直流"}</span></div><small>{statusNames[vehicle.status]}</small></div>
+          <div className="connector-soc"><div><span>SOC</span><strong>{vehicle.currentSocPercent.toFixed(1)}%</strong><small>目标 {vehicle.targetSocPercent}%</small></div><i><em style={{ width: `${Math.min(100, vehicle.currentSocPercent)}%` }} /><b style={{ left: `${Math.min(100, vehicle.targetSocPercent)}%` }} /></i></div>
+          <div className="session-eta"><span>预计剩余</span><strong>{remainingChargeSec > 0 ? formatDuration(remainingChargeSec) : "—"}</strong></div>
+        </div>
+      </div> : <div className="connector-empty"><strong>{isTurnover ? `车位周转 ${formatDuration(connector.turnoverRemainingSec)}` : isIncompatibleIdle ? "枪口可用，但无兼容车辆" : "暂无接入车辆"}</strong><span>{isTurnover ? `周转完成后继续调度 · 默认 ${formatDuration(config.turnoverSec)}` : isIncompatibleIdle ? `${standardWaiting} 辆普通直流车辆仅可使用 A 通用枪` : "等待调度兼容车辆"}</span></div>}
+      {vehicle?.chargingClass === "flash_capable" && connector.role === "universal" && <p className="connector-note">闪充兼容车当前使用 A 通用枪</p>}
+      {isLimited && <p className="connector-note warning"><strong>功率受限</strong><span>{limitLabels.length ? limitLabels.join(" · ") : "实际功率低于请求功率"}</span></p>}
+      {isIncompatibleIdle && <p className="connector-note warning"><strong>B 枪空闲</strong><span>等待车辆与专用枪不兼容</span></p>}
     </article>
   );
 }
@@ -295,6 +319,13 @@ export function Dashboard() {
   const standardWaiting = state.queue.filter((id) => state.vehicles.find((vehicle) => vehicle.id === id)?.chargingClass === "standard_dc").length;
   const flashWaiting = state.queue.length - standardWaiting;
   const pile = state.piles[0];
+  const pileActualPowerKw = connectorA.actualPowerKw + connectorB.actualPowerKw;
+  const pileRequestedPowerKw = connectorA.requestedPowerKw + connectorB.requestedPowerKw;
+  const busLoadPowerKw = state.chargingPowerKw + config.baseLoadKw;
+  const storageFlowPowerKw = Math.abs(state.storage.powerKw);
+  const storageFlowOperator = state.storage.powerKw < 0 ? "−" : "+";
+  const aConnectorVehicle = state.vehicles.find((vehicle) => vehicle.id === connectorA.currentVehicleId);
+  const stationNoticeActive = activeLimit || state.gridControl.mode !== "normal" || (!connectorB.currentVehicleId && connectorB.turnoverRemainingSec <= 0 && standardWaiting > 0 && flashWaiting === 0) || (aConnectorVehicle?.chargingClass === "flash_capable" && standardWaiting > 0);
   const sourceNote = config.universalPolicyCapKw ? `A 枪启用 ${config.universalPolicyCapKw}kW 案例策略上限` : "A/B 单枪铭牌上限均为 1500kW";
 
   const updateConfig = <K extends keyof SimulationConfig>(key: K, value: SimulationConfig[K]) => setConfig((current) => ({ ...current, [key]: value }));
@@ -520,31 +551,28 @@ export function Dashboard() {
         </aside>
 
         <section className="station-panel panel">
-          <div className="panel-title station-title"><div><h2>01# 兆瓦闪充站 · 能量流</h2></div><div className="station-status"><span className={activeLimit || state.gridControl.mode !== "normal" ? "warning-text" : "ok-text"}>{state.gridControl.mode === "outage" ? "电网断电 · 储能支撑" : state.gridControl.mode === "limited" ? `电网临时限至 ${effectiveGridLimit}kW` : activeLimit ? "功率受限" : "系统正常"}</span><small>更新于 T+{formatTime(state.timeSec)}</small></div></div>
-          <div className="energy-strip">
-            <article className={`energy-node grid-node ${state.gridControl.mode}`}><span className="node-icon">{state.gridControl.mode === "outage" ? "断电" : "电网"}</span><div><small>GRID INPUT · {gridStatusLabel}</small><strong>{formatPower(state.gridPowerKw)}</strong><p>有效上限 {Math.round(effectiveGridLimit)} kW · 使用 {effectiveGridLimit ? Math.round(state.gridPowerKw / effectiveGridLimit * 100) : 0}%</p></div></article>
-            <div className={`flow-line ${state.gridPowerKw > 0 ? "active" : ""}`}><span>→</span><b>{formatPower(state.gridPowerKw)}</b></div>
-            <article className="energy-node bus-node"><span className="node-icon">母线</span><div><small>DC BUS</small><strong>{formatPower(state.chargingPowerKw)}</strong><p>基础负荷 {config.baseLoadKw} kW</p></div></article>
-            <div className={`flow-line storage-flow ${Math.abs(state.storage.powerKw) > 0 ? "active" : ""}`}><span>{state.storage.powerKw >= 0 ? "←" : "→"}</span><b>{formatPower(Math.abs(state.storage.powerKw))}</b></div>
-            <article className="energy-node storage-node"><span className="node-icon">储能</span><div><small>STORAGE A+B</small><strong>{Math.round(storageSoc)}% SOC</strong><p>{state.storage.powerKw > 0 ? `放电 ${formatPower(state.storage.powerKw)}` : state.storage.powerKw < 0 ? `充电 ${formatPower(-state.storage.powerKw)}` : "待机"}</p></div></article>
+          <div className="panel-title station-title"><div><h2>01# 兆瓦闪充站 · 双枪作业</h2></div><div className="station-status"><span className={activeLimit || state.gridControl.mode !== "normal" ? "warning-text" : "ok-text"}>{state.gridControl.mode === "outage" ? "电网断电 · 储能支撑" : state.gridControl.mode === "limited" ? `电网临时限至 ${effectiveGridLimit}kW` : activeLimit ? "功率受限" : "运行正常"}</span><small>T+{formatTime(state.timeSec)}</small></div></div>
+          <div className="energy-summary" aria-label="电网、储能与直流母线功率关系">
+            <div className={`energy-summary-item grid-node ${state.gridControl.mode}`}><span>电网输入</span><strong>{Math.round(state.gridPowerKw).toLocaleString("zh-CN")}<small>kW</small></strong><p>{gridStatusLabel} · 上限 {Math.round(effectiveGridLimit).toLocaleString("zh-CN")}</p></div>
+            <span className="energy-operator">{storageFlowOperator}</span>
+            <div className="energy-summary-item storage-node"><span>储能</span><strong>{Math.round(storageFlowPowerKw).toLocaleString("zh-CN")}<small>kW</small></strong><p>{state.storage.powerKw > 0 ? "放电并入" : state.storage.powerKw < 0 ? "充电吸收" : "待机"} · {storageSoc.toFixed(1)}% SOC</p></div>
+            <span className="energy-operator">=</span>
+            <div className="energy-summary-item bus-node"><span>直流母线负载</span><strong>{Math.round(busLoadPowerKw).toLocaleString("zh-CN")}<small>kW</small></strong><p>车辆 {Math.round(state.chargingPowerKw).toLocaleString("zh-CN")} · 基础 {config.baseLoadKw}</p></div>
           </div>
 
-          <div className="station-canvas">
-            <div className="road-label entrance">入口 →</div><div className="road-label exit">→ 出口</div>
-            <div className="road-lines" />
-            <article className="pile-card">
-              <header><div><small>LIQUID-COOLED DUAL CONNECTOR</small><h3>{pile.name}</h3></div><div className="pile-total"><span>双枪合计</span><strong>{formatPower(connectorA.actualPowerKw + connectorB.actualPowerKw)}</strong><small>/ {config.pileAggregateMaxPowerKw} kW</small></div></header>
-              <div className="shared-meter"><i style={{ width: `${Math.min(100, (connectorA.actualPowerKw + connectorB.actualPowerKw) / config.pileAggregateMaxPowerKw * 100)}%` }} /></div>
+          <div className="station-workspace">
+            <section className="pile-workspace" aria-label={pile.name}>
+              <header className="pile-overview"><div><h3>{pile.name}</h3><p>单枪上限 {config.connectorMaxPowerKw.toLocaleString("zh-CN")} kW · {policyNames[config.pilePolicy]}</p></div><div className="pile-output"><span>双枪实际 / 请求</span><strong>{Math.round(pileActualPowerKw).toLocaleString("zh-CN")}<small>/ {Math.round(pileRequestedPowerKw).toLocaleString("zh-CN")} kW</small></strong><p>整桩共享上限 {config.pileAggregateMaxPowerKw.toLocaleString("zh-CN")} kW</p></div></header>
+              <div className={`shared-meter ${pileRequestedPowerKw > pileActualPowerKw + 1 ? "limited" : ""}`}><i style={{ width: `${Math.min(100, pileActualPowerKw / config.pileAggregateMaxPowerKw * 100)}%` }} /></div>
               <div className="bay-grid"><ConnectorBay connector={connectorA} state={state} config={config} onVehicle={setSelectedVehicle} /><ConnectorBay connector={connectorB} state={state} config={config} onVehicle={setSelectedVehicle} /></div>
-              <footer><span>A {connectorA.actualPowerKw.toFixed(0)}kW</span><span className={pile.aggregateLimitedSec ? "warning-text" : ""}>{activeLimit ? `共享上限 · ${policyNames[config.pilePolicy]}` : "双枪独立工作"}</span><span>B {connectorB.actualPowerKw.toFixed(0)}kW</span></footer>
-            </article>
-            <div className="queue-zone">
-              <div className="queue-label"><strong>等候区</strong><span>{state.queue.length} 辆排队 · 单一全局队列</span></div>
-              <div className="queue-cars">{state.queue.slice(0, 6).map((id) => { const vehicle = state.vehicles.find((item) => item.id === id)!; const estimate = estimateVehicleWaitTime(id, state, config); return <div className="queue-vehicle" key={id}><VehicleGlyph vehicle={vehicle} compact onClick={() => setSelectedVehicle(vehicle)} /><strong>约 {formatDuration(estimate.expectedWaitSec)}</strong></div>; })}{state.queue.length === 0 && <span className="empty-queue">暂无等待车辆</span>}</div>
-            </div>
+              <div className="pile-context"><span>A {Math.round(connectorA.actualPowerKw).toLocaleString("zh-CN")} kW</span><span className={activeLimit ? "warning-text" : ""}>{activeLimit ? "实际功率低于请求" : "按当前请求输出"}</span><span>B {Math.round(connectorB.actualPowerKw).toLocaleString("zh-CN")} kW</span></div>
+            </section>
+            <section className="queue-zone" aria-label="车辆等候队列">
+              <div className="queue-label"><div><strong>等候队列</strong><span>单一全局队列 · 按现有调度策略分配</span></div><p><strong>{state.queue.length}</strong> 辆 · 闪充 {flashWaiting} · 普通 {standardWaiting}</p></div>
+              <div className="queue-list">{state.queue.slice(0, 4).map((id, index) => { const vehicle = state.vehicles.find((item) => item.id === id)!; const estimate = estimateVehicleWaitTime(id, state, config); return <button className="queue-item" key={id} onClick={() => setSelectedVehicle(vehicle)}><span>{String(index + 1).padStart(2, "0")}</span><div><strong>{vehicle.id}</strong><small>{vehicle.chargingClass === "flash_capable" ? "闪充兼容 · 可用 A / B" : "普通直流 · 仅可用 A"}</small></div><em>约 {formatDuration(estimate.expectedWaitSec)}</em></button>; })}{state.queue.length === 0 && <span className="empty-queue">当前没有等待车辆</span>}{state.queue.length > 4 && <span className="queue-more">另有 {state.queue.length - 4} 辆</span>}</div>
+              <div className={`station-diagnostic ${stationNoticeActive ? "active" : ""}`}><span>{stationNoticeActive ? "需关注" : "调度正常"}</span><p>{diagnostics}</p></div>
+            </section>
           </div>
-
-          <div className="diagnostic-card"><span className="diagnostic-icon">!</span><div><strong>队列与兼容性诊断</strong><p>{diagnostics}</p></div><div className="diagnostic-stats"><span>队列<strong>{state.queue.length}</strong></span><span>闪充<strong>{flashWaiting}</strong></span><span>普通<strong>{standardWaiting}</strong></span><span>B 可服务<strong>{flashWaiting}</strong></span><span>不兼容等待<strong>{!connectorB.currentVehicleId ? standardWaiting : 0}</strong></span></div></div>
         </section>
 
         <aside className="metrics-panel panel">
