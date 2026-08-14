@@ -481,7 +481,7 @@ export function Dashboard() {
               <ParameterRow label="额定容量" value={config.storageCapacityKWh} min={100} max={1000} step={20} unit="kWh" onChange={(value) => { updateConfig("storageCapacityKWh", value); setState((current) => { const soc = current.storage.energyKWh / Math.max(1, current.storage.capacityKWh); return { ...current, storage: { ...current.storage, capacityKWh: value, energyKWh: Math.min(value, value * soc) } }; }); }} />
               <ParameterRow label="最大放电功率" value={config.storageMaxDischargePowerKw} min={0} max={2000} step={50} unit="kW" onChange={(value) => { updateConfig("storageMaxDischargePowerKw", value); setState((current) => ({ ...current, storage: { ...current.storage, maxDischargePowerKw: value } })); }} />
               <ParameterRow label="最低 SOC" value={config.storageMinSocPercent} min={5} max={50} step={1} unit="%" onChange={(value) => { updateConfig("storageMinSocPercent", value); setState((current) => ({ ...current, storage: { ...current.storage, minSocPercent: value } })); }} />
-              <div className="read-only-row"><span>最大充电功率</span><strong>{config.storageMaxChargePowerKw} <small>kW</small></strong></div>
+              <ParameterRow label="最大充电功率" value={config.storageMaxChargePowerKw} min={300} max={2500} step={50} unit="kW" onChange={(value) => { updateConfig("storageMaxChargePowerKw", value); setState((current) => ({ ...current, storage: { ...current.storage, maxChargePowerKw: value } })); }} />
             </div>
           </details>
           <details className="scene-parameter">

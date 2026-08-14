@@ -170,6 +170,30 @@ describe("单枪、整桩与站级功率约束", () => {
 });
 
 describe("状态、等待预测与统计", () => {
+  it("默认储能最大充电功率为 600kW", () => {
+    assert.equal(baseConfig.storageMaxChargePowerKw, 600);
+    assert.equal(createEmptyState(baseConfig).storage.maxChargePowerKw, 600);
+  });
+
+  it("储能充电功率使用配置值而不是固定 420kW", () => {
+    const lowConfig = { ...baseConfig, autoArrivalEnabled: false, gridMaxPowerKw: 2500, storageMaxChargePowerKw: 300 };
+    const lowState = stepSimulation(createEmptyState(lowConfig), lowConfig, 1);
+    assert.equal(lowState.storage.powerKw, -300);
+
+    const highConfig = { ...lowConfig, storageMaxChargePowerKw: 1200 };
+    const highState = stepSimulation(createEmptyState(highConfig), highConfig, 1);
+    assert.equal(highState.storage.powerKw, -1200);
+    assert.ok(Math.abs(highState.storage.powerKw) > 420);
+  });
+
+  it("调高储能充电上限仍受电网余量约束", () => {
+    const config = { ...baseConfig, autoArrivalEnabled: false, gridMaxPowerKw: 800, storageMaxChargePowerKw: 2500 };
+    const state = stepSimulation(createEmptyState(config), config, 1);
+    assert.equal(state.storage.powerKw, -(config.gridMaxPowerKw - config.baseLoadKw));
+    assert.equal(state.gridPowerKw, config.gridMaxPowerKw);
+    assert.ok(Math.abs(state.storage.powerKw) < config.storageMaxChargePowerKw);
+  });
+
   it("空站重置状态不含车辆、队列或枪口占用", () => {
     const state = createEmptyState({ ...baseConfig, autoArrivalEnabled: false });
     assert.equal(state.vehicles.length, 0);
