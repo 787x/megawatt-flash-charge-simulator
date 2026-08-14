@@ -371,6 +371,9 @@ input[type="range"] { width: 100%; height: 3px; accent-color: var(--cyan); }
 .tabs button { border: 0; border-right: 1px solid var(--line); border-radius: 0; background: transparent; color: var(--muted); padding: 8px 17px; white-space: nowrap; font-size: 12px; }
 .tabs button.active { color: var(--text); box-shadow: inset 0 -2px var(--cyan); background: transparent; }
 .tabs button span { margin-left: 5px; padding: 1px 4px; border-radius: 2px; color: var(--text); background: color-mix(in srgb, var(--amber) 22%, transparent); }
+.tabs .tab-result, .tabs .tab-model, .tabs .tab-reference { margin-left: 8px; border-left: 1px solid var(--line-strong); }
+.tabs .tab-model, .tabs .tab-reference { color: var(--faint); }
+.tabs .tab-model.active, .tabs .tab-reference.active { color: var(--text); }
 .tabs .export-csv { margin-left: auto; color: var(--muted); }
 .tab-content { min-height: 230px; padding: 14px; }
 .chart-content { display: grid; grid-template-columns: 230px 1fr; gap: 20px; align-items: stretch; }
@@ -388,20 +391,31 @@ th { color: var(--muted); font-weight: 600; text-align: left; background: var(--
 th, td { padding: 9px 11px; border-bottom: 1px solid var(--line); white-space: nowrap; }
 tbody tr { cursor: pointer; }
 tbody tr:hover { background: var(--cyan-soft); }
+.table-number { text-align: right; font-variant-numeric: tabular-nums lining-nums; }
+.table-power small { margin-left: 4px; color: var(--faint); font: 10px Consolas, "SFMono-Regular", monospace; }
 .table-status { padding: 2px 4px; border: 0; border-left: 2px solid var(--line-strong); }
 .table-status.charging { color: var(--green); }
 .table-status.queued { color: var(--amber); }
 .remaining-cell { color: var(--text); font-weight: 650; }
 .event-list { max-height: 310px; overflow: auto; padding: 0; }
-.event-list article { display: grid; grid-template-columns: 115px 1fr 220px; gap: 10px; padding: 9px 13px; border-bottom: 1px solid var(--line); font-size: 12px; }
-.event-list time, .event-list small { color: var(--muted); font: 10px Consolas, "SFMono-Regular", monospace; }
+.event-list article { display: grid; grid-template-columns: 96px minmax(0, 1fr) 180px; gap: 10px; align-items: start; padding: 9px 13px; border-bottom: 1px solid var(--line); font-size: 12px; }
+.event-list time { color: var(--muted); font: 11px Consolas, "SFMono-Regular", monospace; font-variant-numeric: tabular-nums lining-nums; }
+.event-list small { min-width: 0; overflow: hidden; color: var(--faint); font: 10px/1.25 Consolas, "SFMono-Regular", monospace; text-overflow: ellipsis; white-space: nowrap; }
+.event-list small b { color: var(--amber); font-weight: 600; }
 .event-list article.warning { box-shadow: inset 2px 0 var(--amber); }
-.event-list article.success { box-shadow: inset 2px 0 var(--green); }
-.analytics-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
-.analytics-grid .metric-card { min-height: 92px; }
+.event-list article.error { box-shadow: inset 2px 0 var(--red); }
+.analytics-grid { display: grid; grid-template-columns: 1fr 1.2fr 1.15fr .9fr; gap: 0; padding: 0; }
+.analytics-group { min-width: 0; padding: 10px 12px 6px; border-left: 1px solid var(--line); }
+.analytics-group:first-child { border-left: 0; }
+.analytics-group h3 { margin: 0 0 4px; color: var(--muted); font-size: 11px; font-weight: 650; }
+.analytics-group .metric-card { min-height: 0; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.analytics-group .metric-card:last-child { border-bottom: 0; }
+.analytics-group .metric-card > strong { margin: 3px 0 2px; font-size: 16px; }
+.analytics-group .metric-card > small { line-height: 1.3; }
 .curve-editor { display: grid; grid-template-columns: 230px minmax(320px, 1fr) 270px; gap: 18px; }
 .curve-head { align-items: flex-start; flex-direction: column; }
 .curve-head button { color: var(--cyan); }
+.curve-head > button { border-color: var(--line-strong); color: var(--text); }
 .curve-switch { display: grid; grid-template-columns: 1fr 1.35fr; width: 100%; gap: 5px; }
 .curve-switch button { min-height: 34px; border: 1px solid var(--line); background: var(--bg-soft); color: var(--muted); font-size: 11px; }
 .curve-switch button.active { border-color: var(--cyan); background: var(--cyan-soft); color: var(--cyan); }
