@@ -145,12 +145,69 @@ function ConnectorBay({ connector, state, config, onVehicle }: { connector: Conn
   );
 }
 
-function ParameterRow({ label, value, min, max, step = 1, unit, onChange }: { label: string; value: number; min: number; max: number; step?: number; unit: string; onChange: (value: number) => void }) {
+function ParameterRow({ label, value, min, max, step = 1, unit, onChange, showSlider = true }: { label: string; value: number; min: number; max: number; step?: number; unit: string; onChange: (value: number) => void; showSlider?: boolean }) {
+  const [draft, setDraft] = useState(String(value));
+  const [invalid, setInvalid] = useState(false);
+
+  useEffect(() => {
+    setDraft(String(value));
+    setInvalid(false);
+  }, [value]);
+
+  const updateFromText = (raw: string) => {
+    setDraft(raw);
+    const next = Number(raw);
+    const isValid = raw.trim() !== "" && Number.isFinite(next) && next >= min && next <= max;
+    setInvalid(!isValid);
+    if (isValid) onChange(next);
+  };
+
+  const restoreValue = () => {
+    if (!invalid) return;
+    setDraft(String(value));
+    setInvalid(false);
+  };
+
+  const updateFromSlider = (raw: number) => {
+    const snapped = Math.round(raw / step) * step;
+    onChange(Math.max(min, Math.min(max, snapped)));
+  };
+
   return (
-    <label className="parameter-row">
-      <span>{label}<output><strong>{value}</strong><small>{unit}</small></output></span>
-      <input type="range" value={value} min={min} max={max} step={step} onChange={(event) => onChange(Number(event.target.value))} />
-    </label>
+    <div className={`parameter-row ${showSlider ? "with-slider" : "number-only"}`}>
+      <label>
+        <span>{label}</span>
+        <span className={`parameter-value ${invalid ? "invalid" : ""}`}>
+          <input
+            type="number"
+            value={draft}
+            min={min}
+            max={max}
+            step={step}
+            inputMode="decimal"
+            aria-invalid={invalid}
+            aria-label={`${label}，${unit}`}
+            onChange={(event) => updateFromText(event.target.value)}
+            onBlur={restoreValue}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") event.currentTarget.blur();
+              if (event.key === "Escape") {
+                setDraft(String(value));
+                setInvalid(false);
+                event.currentTarget.blur();
+              }
+            }}
+          />
+          <small>{unit}</small>
+        </span>
+      </label>
+      {showSlider && <input aria-label={`${label}快速调整`} type="range" value={value} min={min} max={max} step="any" onChange={(event) => updateFromSlider(Number(event.target.value))} onKeyDown={(event) => {
+        if (["ArrowLeft", "ArrowDown", "ArrowRight", "ArrowUp"].includes(event.key)) {
+          event.preventDefault();
+          updateFromSlider(value + (["ArrowLeft", "ArrowDown"].includes(event.key) ? -step : step));
+        }
+      }} />}
+    </div>
   );
 }
 
@@ -381,50 +438,84 @@ export function Dashboard() {
 
         <aside className="config-panel panel">
           <div className="panel-title"><div><h2>站点参数</h2></div><span className="live-pill">实时</span></div>
-          <details open>
-            <summary><span>01</span>电网与母线<small>{formatPower(config.gridMaxPowerKw)}</small></summary>
+          <section className="parameter-section quick-controls" aria-labelledby="quick-controls-title">
+            <div className="parameter-section-heading"><div><h3 id="quick-controls-title">快速控制</h3><p>仿真运行中即时生效</p></div><span>常用</span></div>
+
+            <div className="control-group">
+              <div className="control-group-title"><strong>车辆到达</strong><span>{config.arrivalRatePerHour} 辆/h · 闪充 {Math.round(config.flashShare * 100)}%</span></div>
+              <label className="switch-row"><span>自动生成车辆<small>按当前到达率持续生成</small></span><input type="checkbox" checked={config.autoArrivalEnabled} onChange={(event) => updateConfig("autoArrivalEnabled", event.target.checked)} /></label>
+              <div className="quick-parameter-grid">
+                <ParameterRow label="平均到达率" value={config.arrivalRatePerHour} min={0} max={60} step={1} unit="辆/h" onChange={(value) => updateConfig("arrivalRatePerHour", value)} />
+                <ParameterRow label="闪充车辆占比" value={Math.round(config.flashShare * 100)} min={0} max={100} step={5} unit="%" onChange={(value) => updateConfig("flashShare", value / 100)} />
+              </div>
+              <button className="wide-button" onClick={() => setShowAdd(true)}>手动添加车辆</button>
+            </div>
+
+            <div className={`control-group grid-disturbance ${state.gridControl.mode}`}>
+              <div className="control-group-title"><strong>电网运行扰动</strong><span className={state.gridControl.mode === "normal" ? "quiet-status" : "warning-text"}>{state.gridControl.mode === "outage" ? "已断电" : state.gridControl.mode === "limited" ? `限至 ${Math.round(effectiveGridLimit)} kW` : "正常供电"}</span></div>
+              <ParameterRow label="临时功率上限" value={gridLimitDraft} min={0} max={2500} step={20} unit="kW" showSlider={false} onChange={setGridLimitDraft} />
+              <div className="grid-fault-actions"><button className="outage-button" onClick={() => setState((current) => setGridControl(current, "outage"))}>模拟断电</button><button onClick={() => setState((current) => setGridControl(current, "limited", gridLimitDraft))}>启用限功率</button><button className="restore-button" onClick={() => setState((current) => setGridControl(current, "normal"))}>恢复供电</button></div>
+            </div>
+
+            <div className="control-group storage-intervention">
+              <div className="control-group-title"><strong>储能电量干预</strong><span>{storageSoc.toFixed(1)}% SOC</span></div>
+              <ParameterRow label="当前电量" value={Math.round(state.storage.energyKWh)} min={0} max={Math.round(state.storage.capacityKWh)} step={5} unit="kWh" onChange={(value) => setState((current) => setStorageEnergy(current, value))} />
+              <div className="soc-bar"><i style={{ width: `${storageSoc}%` }} /><span>{state.storage.energyKWh.toFixed(1)} / {state.storage.capacityKWh} kWh</span></div>
+              <div className="storage-quick-actions" aria-label="快速设置储能电量">{[20, 50, 80, 100].map((percent) => <button key={percent} onClick={() => setState((current) => setStorageEnergy(current, current.storage.capacityKWh * percent / 100))}>{percent}%</button>)}</div>
+            </div>
+          </section>
+
+          <div className="parameter-section-heading section-divider"><div><h3>场景参数</h3><p>定义站点能力与资源边界</p></div></div>
+          <details className="scene-parameter" open>
+            <summary><span>01</span>电网与母线<small>{config.gridMaxPowerKw} kW · 母线 {config.stationBusMaxPowerKw} kW</small></summary>
             <div className="detail-body">
               <ParameterRow label="电网最大有功功率" value={config.gridMaxPowerKw} min={120} max={2500} step={20} unit="kW" onChange={(value) => updateConfig("gridMaxPowerKw", value)} />
               <ParameterRow label="站内基础负荷" value={config.baseLoadKw} min={0} max={200} step={5} unit="kW" onChange={(value) => updateConfig("baseLoadKw", value)} />
               <ParameterRow label="直流母线上限" value={config.stationBusMaxPowerKw} min={800} max={4200} step={100} unit="kW" onChange={(value) => updateConfig("stationBusMaxPowerKw", value)} />
               <div className="micro-stats"><span>当前有效上限<strong>{Math.round(effectiveGridLimit)} kW</strong></span><span>剩余容量<strong>{Math.max(0, Math.round(effectiveGridLimit - state.gridPowerKw))} kW</strong></span></div>
-              <div className={`grid-fault-panel ${state.gridControl.mode}`}><div><span>手动电网状态</span><strong>{state.gridControl.mode === "outage" ? "● 已断电" : state.gridControl.mode === "limited" ? `● 临时限功率 ${effectiveGridLimit}kW` : "● 正常供电"}</strong></div><label>临时上限<input type="number" min="0" max="2500" step="20" value={gridLimitDraft} onChange={(event) => setGridLimitDraft(Math.max(0, Number(event.target.value) || 0))} /> kW</label><div className="grid-fault-actions"><button className="outage-button" onClick={() => setState((current) => setGridControl(current, "outage"))}>模拟断电</button><button onClick={() => setState((current) => setGridControl(current, "limited", gridLimitDraft))}>启用临时限功率</button><button className="restore-button" onClick={() => setState((current) => setGridControl(current, "normal"))}>恢复供电</button></div></div>
             </div>
           </details>
-          <details open>
-            <summary><span>02</span>储能系统<small>{Math.round(storageSoc)}% SOC</small></summary>
+          <details className="scene-parameter">
+            <summary><span>02</span>储能系统<small>{config.storageCapacityKWh} kWh · Min SOC {config.storageMinSocPercent}%</small></summary>
             <div className="detail-body">
               <ParameterRow label="额定容量" value={config.storageCapacityKWh} min={100} max={1000} step={20} unit="kWh" onChange={(value) => { updateConfig("storageCapacityKWh", value); setState((current) => { const soc = current.storage.energyKWh / Math.max(1, current.storage.capacityKWh); return { ...current, storage: { ...current.storage, capacityKWh: value, energyKWh: Math.min(value, value * soc) } }; }); }} />
               <ParameterRow label="最大放电功率" value={config.storageMaxDischargePowerKw} min={0} max={2000} step={50} unit="kW" onChange={(value) => { updateConfig("storageMaxDischargePowerKw", value); setState((current) => ({ ...current, storage: { ...current.storage, maxDischargePowerKw: value } })); }} />
               <ParameterRow label="最低 SOC" value={config.storageMinSocPercent} min={5} max={50} step={1} unit="%" onChange={(value) => { updateConfig("storageMinSocPercent", value); setState((current) => ({ ...current, storage: { ...current.storage, minSocPercent: value } })); }} />
-              <ParameterRow label="手动调整当前电量" value={Math.round(state.storage.energyKWh)} min={0} max={Math.round(state.storage.capacityKWh)} step={5} unit="kWh" onChange={(value) => setState((current) => setStorageEnergy(current, value))} />
-              <div className="soc-bar"><i style={{ width: `${storageSoc}%` }} /><span>{state.storage.energyKWh.toFixed(1)} / {state.storage.capacityKWh} kWh</span></div>
-              <div className="storage-quick-actions" aria-label="快速设置储能电量">{[20, 50, 80, 100].map((percent) => <button key={percent} onClick={() => setState((current) => setStorageEnergy(current, current.storage.capacityKWh * percent / 100))}>{percent}%</button>)}</div>
+              <div className="read-only-row"><span>最大充电功率</span><strong>{config.storageMaxChargePowerKw} <small>kW</small></strong></div>
             </div>
           </details>
-          <details open>
-            <summary><span>03</span>双枪充电桩<small>{config.pileAggregateMaxPowerKw}kW</small></summary>
+          <details className="scene-parameter">
+            <summary><span>03</span>双枪充电设施<small>单枪 {config.connectorMaxPowerKw} · 整桩 {config.pileAggregateMaxPowerKw} kW</small></summary>
             <div className="detail-body">
               <ParameterRow label="单枪硬件上限" value={config.connectorMaxPowerKw} min={200} max={1500} step={50} unit="kW" onChange={(value) => updateConfig("connectorMaxPowerKw", value)} />
               <ParameterRow label="整桩合计上限" value={config.pileAggregateMaxPowerKw} min={500} max={3000} step={50} unit="kW" onChange={(value) => updateConfig("pileAggregateMaxPowerKw", value)} />
-              <ParameterRow label="车位换车周转" value={config.turnoverSec ?? 60} min={0} max={300} step={15} unit="秒" onChange={(value) => updateConfig("turnoverSec", value)} />
-              <label className="select-row">桩内功率策略<select value={config.pilePolicy} onChange={(event) => updateConfig("pilePolicy", event.target.value as SimulationConfig["pilePolicy"])}>{Object.entries(policyNames).map(([value, name]) => <option value={value} key={value}>{name}</option>)}</select></label>
-              <label className="check-row"><input type="checkbox" checked={config.universalPolicyCapKw !== undefined} onChange={(event) => updateConfig("universalPolicyCapKw", event.target.checked ? 480 : undefined)} />A 枪启用 480kW 案例策略上限</label>
-              <p className="assumption">换车周转默认 60 秒，包含车辆驶离、车位确认与下一车进位准备；“闪充专枪优先”为模型默认策略。</p>
             </div>
           </details>
-          <details open>
-            <summary><span>04</span>车辆到达<small>{config.arrivalRatePerHour} 辆/h</small></summary>
-            <div className="detail-body">
-              <ParameterRow label="平均到达率" value={config.arrivalRatePerHour} min={0} max={60} step={1} unit="辆/h" onChange={(value) => updateConfig("arrivalRatePerHour", value)} />
-              <ParameterRow label="闪充车辆占比" value={Math.round(config.flashShare * 100)} min={0} max={100} step={5} unit="%" onChange={(value) => updateConfig("flashShare", value / 100)} />
-              <label className="check-row"><input type="checkbox" checked={config.autoArrivalEnabled} onChange={(event) => updateConfig("autoArrivalEnabled", event.target.checked)} />自动生成车辆</label>
-              <button className="wide-button" onClick={() => setShowAdd(true)}>＋ 手动添加车辆</button>
+
+          <details className="advanced-settings">
+            <summary><span>高级</span>模型与调度<small>{policyNames[config.pilePolicy]} · {queuePolicyNames[config.queuePolicy]}</small></summary>
+            <div className="detail-body advanced-body">
+              <section className="advanced-group">
+                <h4>功率分配</h4>
+                <label className="select-row">桩内功率策略<select value={config.pilePolicy} onChange={(event) => updateConfig("pilePolicy", event.target.value as SimulationConfig["pilePolicy"])}>{Object.entries(policyNames).map(([value, name]) => <option value={value} key={value}>{name}</option>)}</select></label>
+                <label className="check-row"><input type="checkbox" checked={config.universalPolicyCapKw !== undefined} onChange={(event) => updateConfig("universalPolicyCapKw", event.target.checked ? 480 : undefined)} />A 枪启用 480 kW 案例策略上限</label>
+              </section>
+              <section className="advanced-group">
+                <h4>队列与等待</h4>
+                <label className="select-row">调度算法<select value={config.queuePolicy} onChange={(event) => updateConfig("queuePolicy", event.target.value as SimulationConfig["queuePolicy"])}>{Object.entries(queuePolicyNames).map(([value, name]) => <option key={value} value={value}>{name}</option>)}</select></label>
+                {config.maxAcceptableWaitSec !== null && <ParameterRow label="最大可接受等待" value={Math.round(config.maxAcceptableWaitSec / 60)} min={1} max={720} step={5} unit="分钟" onChange={(value) => updateMaxAcceptableWait(value * 60)} />}
+                <label className="check-row"><input type="checkbox" checked={config.maxAcceptableWaitSec === null} onChange={(event) => updateMaxAcceptableWait(event.target.checked ? null : 30 * 60)} />无限等待，不因超时弃队</label>
+              </section>
+              <section className="advanced-group">
+                <h4>会话时序</h4>
+                <ParameterRow label="车位换车周转" value={config.turnoverSec ?? 60} min={0} max={300} step={15} unit="秒" onChange={(value) => updateConfig("turnoverSec", value)} />
+                <div className="model-value-list"><span>驶入 <strong>{config.movementSec} 秒</strong></span><span>握手 <strong>{config.handshakeSec} 秒</strong></span><span>断开 <strong>{config.disconnectSec} 秒</strong></span><span>随机种子 <strong>{config.randomSeed}</strong></span></div>
+              </section>
+              <details className="parameter-notes">
+                <summary>查看模型说明</summary>
+                <div><p>策略变化只影响后续分配，不迁移正在充电的车辆。</p><p>换车周转包含车辆驶离、车位确认与下一车进位准备；无限等待关闭时，超时车辆会记为弃队。</p></div>
+              </details>
             </div>
-          </details>
-          <details>
-            <summary><span>05</span>队列策略<small>{config.maxAcceptableWaitSec === null ? "∞ 不弃队" : `${Math.round(config.maxAcceptableWaitSec / 60)} 分钟`}</small></summary>
-            <div className="detail-body"><label className="select-row">调度算法<select value={config.queuePolicy} onChange={(event) => updateConfig("queuePolicy", event.target.value as SimulationConfig["queuePolicy"])}>{Object.entries(queuePolicyNames).map(([value, name]) => <option key={value} value={value}>{name}</option>)}</select></label>{config.maxAcceptableWaitSec !== null && <ParameterRow label="最大可接受等待时间" value={Math.round(config.maxAcceptableWaitSec / 60)} min={1} max={720} step={5} unit="分钟" onChange={(value) => updateMaxAcceptableWait(value * 60)} />}<label className="check-row"><input type="checkbox" checked={config.maxAcceptableWaitSec === null} onChange={(event) => updateMaxAcceptableWait(event.target.checked ? null : 30 * 60)} />无限等待（车辆永不因等待超时弃队）</label><p className="assumption">达到最大等待时间后车辆会记为“弃队”；无限等待模式下只保留排队，不触发弃队。策略变化不会迁移正在充电的车辆。</p></div>
           </details>
         </aside>
 
