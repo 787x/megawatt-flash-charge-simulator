@@ -330,7 +330,7 @@ input[type="range"] { width: 100%; height: 3px; accent-color: var(--cyan); }
 .station-diagnostic p { margin: 0; font-size: 10px; line-height: 1.4; }
 .station-diagnostic.active { color: var(--amber); }
 
-.metric-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0; padding: 0 10px 10px; }
+.metric-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0; padding: 0 10px 8px; }
 .metric-card { position: relative; min-height: 84px; padding: 11px 10px; border: 0; border-bottom: 1px solid var(--line); background: transparent; overflow: hidden; }
 .metrics-panel .metric-card:nth-child(odd) { border-right: 1px solid var(--line); }
 .metric-card::before { display: none; }
@@ -341,20 +341,29 @@ input[type="range"] { width: 100%; height: 3px; accent-color: var(--cyan); }
 .metric-card > span { display: block; color: var(--muted); font-size: 11px; }
 .metric-card > strong { display: block; margin: 5px 0 3px; color: var(--text); font: 600 18px Consolas, "SFMono-Regular", monospace; }
 .metric-card > small { display: block; color: var(--faint); font-size: 10px; line-height: 1.35; }
-.utilization-panel { margin: 0 10px; padding: 11px 0; border: 0; border-bottom: 1px solid var(--line); background: transparent; }
-.utilization-panel h3 { margin: 0 0 9px; font-size: 12px; }
-.utilization-panel > div { margin: 8px 0; }
-.utilization-panel div > span { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; }
-.utilization-panel div > span b { color: var(--text); font: 600 11px Consolas, "SFMono-Regular", monospace; }
-.utilization-panel div > i { display: block; height: 3px; margin-top: 5px; background: var(--line); }
+.metrics-panel .metric-card { min-height: 76px; padding: 9px 10px; }
+.metrics-panel .metric-card:nth-child(-n+4) { min-height: 82px; }
+.metrics-panel .metric-card:nth-child(-n+4) > span { color: var(--muted); font-weight: 550; }
+.metrics-panel .metric-card:nth-child(-n+4) > strong { margin-top: 5px; font-size: 19px; }
+.metrics-panel .metric-card:nth-child(-n+4) > small { color: var(--muted); }
+.metrics-panel .metric-card:nth-child(n+5) > span { color: var(--faint); }
+.metrics-panel .metric-card:nth-child(n+5) > strong { margin-top: 4px; font-size: 16px; font-weight: 550; }
+.utilization-panel { margin: 0 10px; padding: 9px 0 8px; border: 0; border-bottom: 1px solid var(--line); background: transparent; }
+.utilization-panel h3 { margin: 0 0 8px; font-size: 12px; }
+.utilization-row { margin: 0 0 8px; }
+.utilization-label { display: grid; grid-template-columns: minmax(0, 1fr) 42px; align-items: baseline; color: var(--muted); font-size: 11px; }
+.utilization-label b { color: var(--text); font: 600 11px Consolas, "SFMono-Regular", monospace; text-align: right; }
+.utilization-row > i { display: block; height: 3px; margin-top: 4px; background: var(--line); }
 .utilization-panel em { display: block; height: 100%; background: var(--cyan); }
-.utilization-panel small { color: var(--muted); font-size: 10px; }
-.limit-card { display: grid; grid-template-columns: 24px 1fr; gap: 8px; margin: 0 10px 10px; padding: 10px 0; border: 0; border-bottom: 1px solid var(--line); background: transparent; }
+.utilization-panel small { display: block; padding-top: 1px; color: var(--muted); font-size: 10px; }
+.limit-card { display: grid; grid-template-columns: 12px 1fr; gap: 6px; align-items: baseline; margin: 0 10px 8px; padding: 7px 0; border: 0; border-bottom: 1px solid var(--line); background: transparent; }
 .limit-card.active { border-color: color-mix(in srgb, var(--amber) 60%, var(--line)); background: color-mix(in srgb, var(--amber) 7%, transparent); }
-.limit-card > span { width: 22px; height: 22px; display: grid; place-items: center; color: var(--muted); border: 0; }
+.limit-card > span { width: 12px; height: auto; display: block; color: var(--faint); border: 0; font-size: 10px; line-height: 1.3; }
 .limit-card.active > span { color: var(--amber); }
-.limit-card strong { font-size: 12px; }
-.limit-card p { margin: 3px 0 0; color: var(--muted); font-size: 10px; line-height: 1.4; }
+.limit-card strong { color: var(--muted); font-size: 11px; font-weight: 550; }
+.limit-card.active strong { color: var(--amber); }
+.limit-card p { margin: 2px 0 0; color: var(--faint); font-size: 10px; line-height: 1.35; }
+.limit-card.active p { color: var(--muted); }
 
 .data-panel { min-height: 285px; }
 .tabs { min-height: 45px; display: flex; align-items: stretch; border-bottom: 1px solid var(--line); overflow-x: auto; }
