@@ -89,6 +89,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, summary:focus-v
 
 .dashboard-grid { min-width: 0; min-height: 0; display: grid; grid-template-columns: clamp(260px, 19vw, 290px) minmax(0, 1fr) clamp(280px, 21vw, 310px); grid-template-rows: auto clamp(460px, 56vh, 560px) minmax(285px, auto); grid-template-areas: "trend trend trend" "config station metrics" "data data data"; gap: 10px; padding: 10px; overflow-x: hidden; overflow-y: auto; }
 .dashboard-grid.queue-collapsed { grid-template-rows: auto var(--station-row-height, clamp(460px, 56vh, 560px)) minmax(285px, auto); }
+.dashboard-grid.queue-expanded { grid-template-rows: auto var(--station-row-height, clamp(460px, 56vh, 560px)) minmax(285px, auto); }
 .dashboard-grid.queue-collapsed .station-panel { overflow: hidden; }
 .panel { min-width: 0; border: 1px solid var(--line); border-radius: 1px; background: var(--panel); box-shadow: none; }
 .trend-overview { grid-area: trend; }
