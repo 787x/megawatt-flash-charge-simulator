@@ -34,7 +34,7 @@ export const baseConfig: SimulationConfig = {
   storageInitialSocPercent: 76,
   storageMinSocPercent: 15,
   storageMaxDischargePowerKw: 900,
-  storageMaxChargePowerKw: 420,
+  storageMaxChargePowerKw: 600,
   queuePolicy: "role_aware_fcfs",
   maxAcceptableWaitSec: 30 * 60,
   pilePolicy: "dedicated_first",

@@ -178,6 +178,10 @@ export function createInitialState(config: SimulationConfig = baseConfig): Simul
     },
     gridPowerKw: 0,
     chargingPowerKw: 0,
+    cumulativeGridImportEnergyKWh: 0,
+    cumulativeRatedGridCapacityEnergyKWh: 0,
+    cumulativeAvailableGridCapacityEnergyKWh: 0,
+    hasGridDisturbanceOccurred: false,
     randomState: config.randomSeed || 1,
     nextAutoArrivalSec: Math.max(15, 3600 / Math.max(1, config.arrivalRatePerHour)),
     events: [],
@@ -225,10 +229,23 @@ export function getEffectiveGridLimit(state: SimulationState, config: Simulation
   return Math.max(0, config.gridMaxPowerKw);
 }
 
+export function getGridRatedCapacityUtilizationPercent(state: SimulationState): number | null {
+  const ratedCapacityEnergyKWh = state.cumulativeRatedGridCapacityEnergyKWh ?? 0;
+  if (ratedCapacityEnergyKWh <= EPSILON) return null;
+  return (state.cumulativeGridImportEnergyKWh ?? 0) / ratedCapacityEnergyKWh * 100;
+}
+
+export function getGridAvailableCapacityUtilizationPercent(state: SimulationState): number | null {
+  const availableCapacityEnergyKWh = state.cumulativeAvailableGridCapacityEnergyKWh ?? 0;
+  if (availableCapacityEnergyKWh <= EPSILON) return null;
+  return (state.cumulativeGridImportEnergyKWh ?? 0) / availableCapacityEnergyKWh * 100;
+}
+
 export function setGridControl(input: SimulationState, mode: GridControlMode, temporaryLimitKw?: number): SimulationState {
   const state = structuredClone(input);
   const nextLimit = Math.max(0, Math.round(temporaryLimitKw ?? state.gridControl.temporaryLimitKw));
   state.gridControl = { mode, temporaryLimitKw: nextLimit };
+  state.hasGridDisturbanceOccurred = Boolean(state.hasGridDisturbanceOccurred || mode === "limited" || mode === "outage");
   if (mode === "outage") addEvent(state, "grid_outage", "手动触发电网断电，站点切换为储能支撑", "warning");
   else if (mode === "limited") addEvent(state, "grid_limit_changed", `电网临时限功率设为 ${nextLimit}kW`, "warning");
   else addEvent(state, "grid_restored", "电网已恢复正常供电", "success");
@@ -478,6 +495,12 @@ function updateEnergy(state: SimulationState, config: SimulationConfig) {
   state.gridPowerKw = Math.max(0, Math.min(gridLimit, load - discharge + charge));
 }
 
+function updateGridEnergyStatistics(state: SimulationState, config: SimulationConfig) {
+  state.cumulativeGridImportEnergyKWh = (state.cumulativeGridImportEnergyKWh ?? 0) + Math.max(0, state.gridPowerKw) / 3600;
+  state.cumulativeRatedGridCapacityEnergyKWh = (state.cumulativeRatedGridCapacityEnergyKWh ?? 0) + Math.max(0, config.gridMaxPowerKw) / 3600;
+  state.cumulativeAvailableGridCapacityEnergyKWh = (state.cumulativeAvailableGridCapacityEnergyKWh ?? 0) + getEffectiveGridLimit(state, config) / 3600;
+}
+
 function updateIncompatibleIdle(state: SimulationState) {
   const standardWaiting = state.queue.some((id) => state.vehicles.find((vehicle) => vehicle.id === id)?.chargingClass === "standard_dc");
   for (const target of state.piles.flatMap((pile) => pile.connectors)) {
@@ -545,6 +568,7 @@ function stepOne(input: SimulationState, config: SimulationConfig): SimulationSt
   state = dispatchVehicles(state, config);
   allocateCharging(state, config);
   updateEnergy(state, config);
+  updateGridEnergyStatistics(state, config);
   updateIncompatibleIdle(state);
   sampleHistory(state, config);
   try {
