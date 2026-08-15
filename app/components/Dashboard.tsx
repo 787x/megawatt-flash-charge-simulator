@@ -9,7 +9,8 @@ import {
   estimateRemainingChargeTime,
   estimateVehicleWaitTime,
   getEffectiveGridLimit,
-  getGridUtilizationPercent,
+  getGridAvailableCapacityUtilizationPercent,
+  getGridRatedCapacityUtilizationPercent,
   getConfigForScenario,
   setGridControl,
   setStorageEnergy,
@@ -258,6 +259,17 @@ function MetricCard({ label, value, note, accent }: { label: string; value: stri
   );
 }
 
+function GridUtilizationRow({ label, accessibleLabel, percent, importEnergyKWh, capacityEnergyKWh, capacityLabel, secondary = false }: { label: string; accessibleLabel: string; percent: number | null; importEnergyKWh: number; capacityEnergyKWh: number; capacityLabel: string; secondary?: boolean }) {
+  const progress = Math.min(100, Math.max(0, percent ?? 0));
+  return (
+    <div className={`grid-utilization-row ${secondary ? "secondary" : ""}`} aria-label={accessibleLabel}>
+      <div className="grid-utilization-heading"><span>{label}</span><strong>{percent === null ? "—" : `${percent.toFixed(1)}%`}</strong></div>
+      <i role="progressbar" aria-label={accessibleLabel} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent === null ? undefined : Number(percent.toFixed(1))}><em style={{ width: `${progress}%` }} /></i>
+      <small>累计取电 <b>{formatEnergy(importEnergyKWh)} / {formatEnergy(capacityEnergyKWh)} kWh</b><span>· {capacityLabel}</span></small>
+    </div>
+  );
+}
+
 export function Dashboard() {
   const [config, setConfig] = useState<SimulationConfig>(baseConfig);
   const [state, setState] = useState<SimulationState>(() => createInitialState(baseConfig));
@@ -367,8 +379,9 @@ export function Dashboard() {
   const allWaits = [...flashWaits, ...standardWaits];
   const activeLimit = connectors.some((item) => item.requestedPowerKw > item.actualPowerKw + 1);
   const gridStatusLabel = state.gridControl.mode === "outage" ? "电网断电" : state.gridControl.mode === "limited" ? `限功率 ${Math.round(effectiveGridLimit)}kW` : "正常供电";
-  const gridUtilizationPercent = getGridUtilizationPercent(state);
-  const gridUtilizationProgress = Math.min(100, Math.max(0, gridUtilizationPercent ?? 0));
+  const ratedGridUtilizationPercent = getGridRatedCapacityUtilizationPercent(state);
+  const availableGridUtilizationPercent = getGridAvailableCapacityUtilizationPercent(state);
+  const hasGridDisturbanceOccurred = state.hasGridDisturbanceOccurred ?? false;
   const standardWaiting = state.queue.filter((id) => state.vehicles.find((vehicle) => vehicle.id === id)?.chargingClass === "standard_dc").length;
   const flashWaiting = state.queue.length - standardWaiting;
   const pile = state.piles[0];
@@ -644,11 +657,11 @@ export function Dashboard() {
             <MetricCard label="平均等待" value={formatDuration(average(allWaits))} note={`闪充 ${formatDuration(average(flashWaits))}`} />
             <MetricCard label="普通车等待" value={formatDuration(average(standardWaits))} note="仅计 A 通用枪服务能力" accent={standardWaits.length && average(standardWaits) > average(flashWaits) * 1.5 ? "red" : undefined} />
           </div>
-          <section className="grid-utilization-panel" aria-label="电网利用率累计统计">
-            <div className="grid-utilization-heading"><h3>电网利用率</h3><strong>{gridUtilizationPercent === null ? "—" : `${gridUtilizationPercent.toFixed(1)}%`}</strong></div>
-            <i role="progressbar" aria-label="电网利用率" aria-valuemin={0} aria-valuemax={100} aria-valuenow={gridUtilizationPercent === null ? undefined : Number(gridUtilizationPercent.toFixed(1))}><em style={{ width: `${gridUtilizationProgress}%` }} /></i>
-            <p><span>累计取电 <b>{formatEnergy(state.cumulativeGridImportEnergyKWh ?? 0)} kWh</b></span><span>理论容量 <b>{formatEnergy(state.cumulativeRatedGridCapacityEnergyKWh ?? 0)} kWh</b></span></p>
-            <small>统计 T+{formatTime(state.timeSec)} · 按额定接入容量累计</small>
+          <section className={`grid-utilization-panel ${hasGridDisturbanceOccurred ? "split" : ""}`} aria-label="累计电网利用率">
+            {hasGridDisturbanceOccurred && <h3>电网利用率</h3>}
+            <GridUtilizationRow label={hasGridDisturbanceOccurred ? "额定容量" : "电网利用率"} accessibleLabel="电网额定容量利用率" percent={ratedGridUtilizationPercent} importEnergyKWh={state.cumulativeGridImportEnergyKWh ?? 0} capacityEnergyKWh={state.cumulativeRatedGridCapacityEnergyKWh ?? 0} capacityLabel={hasGridDisturbanceOccurred ? "额定理论" : "理论容量"} />
+            {hasGridDisturbanceOccurred && <GridUtilizationRow label="可用容量" accessibleLabel="电网可用容量利用率" percent={availableGridUtilizationPercent} importEnergyKWh={state.cumulativeGridImportEnergyKWh ?? 0} capacityEnergyKWh={state.cumulativeAvailableGridCapacityEnergyKWh ?? 0} capacityLabel="可用理论" secondary />}
+            <small className="grid-utilization-time">统计 T+{formatTime(state.timeSec)}{hasGridDisturbanceOccurred ? " · 已计入电网扰动" : " · 按额定接入容量累计"}</small>
           </section>
           <div className="utilization-panel"><h3>枪口利用率</h3><div className="utilization-row"><div className="utilization-label"><span>A 通用枪</span><b>{state.timeSec ? Math.round(connectorA.busySec / state.timeSec * 100) : 0}%</b></div><i><em style={{ width: `${state.timeSec ? Math.min(100, connectorA.busySec / state.timeSec * 100) : 0}%` }} /></i></div><div className="utilization-row"><div className="utilization-label"><span>B 闪充专用</span><b>{state.timeSec ? Math.round(connectorB.busySec / state.timeSec * 100) : 0}%</b></div><i><em style={{ width: `${state.timeSec ? Math.min(100, connectorB.busySec / state.timeSec * 100) : 0}%` }} /></i></div><small>专用枪不兼容空闲 {formatDuration(connectorB.incompatibleIdleSec)}</small></div>
           <div className={`limit-card ${activeLimit ? "active" : ""}`}><span>{activeLimit ? "!" : "✓"}</span><div><strong>{activeLimit ? "当前存在功率限制" : "功率约束均满足"}</strong><p>{activeLimit ? `${policyNames[config.pilePolicy]}：A/B 实际功率受整桩或站级上限约束。` : "单枪 ≤1500kW · 整桩 ≤2100kW"}</p></div></div>

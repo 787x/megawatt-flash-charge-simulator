@@ -10,7 +10,8 @@ import {
   estimateRemainingChargeTime,
   estimateVehicleWaitTime,
   getEffectiveGridLimit,
-  getGridUtilizationPercent,
+  getGridAvailableCapacityUtilizationPercent,
+  getGridRatedCapacityUtilizationPercent,
   interpolateCurve,
   isVehicleEligibleForConnector,
   setGridControl,
@@ -143,74 +144,120 @@ describe("角色感知原子调度", () => {
 });
 
 describe("累计电网利用率", () => {
-  it("恒定使用额定容量的 50% 时累计利用率为 50%", () => {
+  it("正常运行时额定与可用容量利用率相同，且没有扰动标记", () => {
     const { config, state } = gridUtilizationFixture(1000, 500);
     const result = stepSimulation(state, config, 12);
     assertClose(result.cumulativeGridImportEnergyKWh, 500 * 12 / 3600);
     assertClose(result.cumulativeRatedGridCapacityEnergyKWh, 1000 * 12 / 3600);
-    assertClose(getGridUtilizationPercent(result)!, 50);
+    assertClose(result.cumulativeAvailableGridCapacityEnergyKWh, 1000 * 12 / 3600);
+    assertClose(getGridRatedCapacityUtilizationPercent(result)!, 50);
+    assertClose(getGridAvailableCapacityUtilizationPercent(result)!, 50);
+    assert.equal(result.hasGridDisturbanceOccurred, false);
   });
 
-  it("实际取电持续达到额定容量时累计利用率为 100%", () => {
+  it("前半正常满载、后半限至 500kW 时额定 75%、可用 100%", () => {
     const { config, state } = gridUtilizationFixture(1000, 1000);
-    const result = stepSimulation(state, config, 12);
-    assertClose(getGridUtilizationPercent(result)!, 100);
+    const normal = stepSimulation(state, config, 10);
+    const limited = setGridControl(normal, "limited", 500);
+    const result = stepSimulation(limited, config, 10);
+    assertClose(result.cumulativeGridImportEnergyKWh, (1000 * 10 + 500 * 10) / 3600);
+    assertClose(result.cumulativeRatedGridCapacityEnergyKWh, 1000 * 20 / 3600);
+    assertClose(result.cumulativeAvailableGridCapacityEnergyKWh, (1000 * 10 + 500 * 10) / 3600);
+    assertClose(getGridRatedCapacityUtilizationPercent(result)!, 75);
+    assertClose(getGridAvailableCapacityUtilizationPercent(result)!, 100);
+    assert.equal(result.hasGridDisturbanceOccurred, true);
   });
 
-  it("一半周期满功率、一半周期断电时利用率为 50%", () => {
+  it("前半正常满载、后半断电时额定 50%、可用 100%", () => {
     const { config, state } = gridUtilizationFixture(1000, 1000);
     const powered = stepSimulation(state, config, 10);
     const outage = setGridControl(powered, "outage");
     const result = stepSimulation(outage, config, 10);
     assertClose(result.cumulativeGridImportEnergyKWh, 1000 * 10 / 3600);
     assertClose(result.cumulativeRatedGridCapacityEnergyKWh, 1000 * 20 / 3600);
-    assertClose(getGridUtilizationPercent(result)!, 50);
+    assertClose(result.cumulativeAvailableGridCapacityEnergyKWh, 1000 * 10 / 3600);
+    assertClose(getGridRatedCapacityUtilizationPercent(result)!, 50);
+    assertClose(getGridAvailableCapacityUtilizationPercent(result)!, 100);
+    assert.equal(result.hasGridDisturbanceOccurred, true);
   });
 
-  it("临时限功率只影响实际取电，理论容量仍按额定值累计", () => {
+  it("扰动后恢复供电仍保留双口径与扰动标记", () => {
     const { config, state } = gridUtilizationFixture(1000, 1000);
-    const limited = setGridControl(state, "limited", 500);
-    const result = stepSimulation(limited, config, 10);
-    assertClose(result.cumulativeGridImportEnergyKWh, 500 * 10 / 3600);
-    assertClose(result.cumulativeRatedGridCapacityEnergyKWh, 1000 * 10 / 3600);
-    assertClose(getGridUtilizationPercent(result)!, 50);
+    const normal = stepSimulation(state, config, 10);
+    const outage = stepSimulation(setGridControl(normal, "outage"), config, 10);
+    const restored = setGridControl(outage, "normal");
+    assert.equal(restored.hasGridDisturbanceOccurred, true);
+    const result = stepSimulation(restored, config, 10);
+    assertClose(result.cumulativeGridImportEnergyKWh, 1000 * 20 / 3600);
+    assertClose(result.cumulativeRatedGridCapacityEnergyKWh, 1000 * 30 / 3600);
+    assertClose(result.cumulativeAvailableGridCapacityEnergyKWh, 1000 * 20 / 3600);
+    assertClose(getGridRatedCapacityUtilizationPercent(result)!, 200 / 3);
+    assertClose(getGridAvailableCapacityUtilizationPercent(result)!, 100);
+    assert.equal(result.hasGridDisturbanceOccurred, true);
   });
 
-  it("暂停期间不调用仿真步进，累计统计保持不变", () => {
+  it("Reset 会清空三个累计量和扰动标记", () => {
+    const { config, state } = gridUtilizationFixture(1000, 500);
+    const disturbed = stepSimulation(setGridControl(state, "limited", 400), config, 10);
+    assert.equal(disturbed.hasGridDisturbanceOccurred, true);
+    const reset = createEmptyState(config);
+    assert.equal(reset.cumulativeGridImportEnergyKWh, 0);
+    assert.equal(reset.cumulativeRatedGridCapacityEnergyKWh, 0);
+    assert.equal(reset.cumulativeAvailableGridCapacityEnergyKWh, 0);
+    assert.equal(reset.hasGridDisturbanceOccurred, false);
+    assert.equal(getGridRatedCapacityUtilizationPercent(reset), null);
+    assert.equal(getGridAvailableCapacityUtilizationPercent(reset), null);
+  });
+
+  it("运行中修改额定容量后两个容量分母都按各时段积分", () => {
+    const first = gridUtilizationFixture(1000, 500);
+    const firstPeriod = stepSimulation(first.state, first.config, 10);
+    const secondConfig = { ...first.config, gridMaxPowerKw: 2000 };
+    const result = stepSimulation(firstPeriod, secondConfig, 10);
+    const expectedCapacityEnergy = (1000 * 10 + 2000 * 10) / 3600;
+    assertClose(result.cumulativeGridImportEnergyKWh, 500 * 20 / 3600);
+    assertClose(result.cumulativeRatedGridCapacityEnergyKWh, expectedCapacityEnergy);
+    assertClose(result.cumulativeAvailableGridCapacityEnergyKWh, expectedCapacityEnergy);
+    assertClose(getGridRatedCapacityUtilizationPercent(result)!, 100 / 3);
+    assertClose(getGridAvailableCapacityUtilizationPercent(result)!, 100 / 3);
+  });
+
+  it("暂停期间不调用仿真步进，三个累计量与两个利用率保持不变", () => {
     const { config, state } = gridUtilizationFixture(1000, 500);
     const beforePause = stepSimulation(state, config, 5);
     const pausedState = structuredClone(beforePause);
     assert.deepEqual(pausedState, beforePause);
-    assertClose(getGridUtilizationPercent(pausedState)!, 50);
+    assertClose(getGridRatedCapacityUtilizationPercent(pausedState)!, 50);
+    assertClose(getGridAvailableCapacityUtilizationPercent(pausedState)!, 50);
   });
 
-  it("单步一秒会累计该秒的实际取电和额定容量能量", () => {
+  it("单步一秒会累计该秒的实际取电、额定容量与可用容量能量", () => {
     const { config, state } = gridUtilizationFixture(1000, 500);
     const result = stepSimulation(state, config, 1);
     assert.equal(result.timeSec, 1);
     assertClose(result.cumulativeGridImportEnergyKWh, 500 / 3600);
     assertClose(result.cumulativeRatedGridCapacityEnergyKWh, 1000 / 3600);
-    assertClose(getGridUtilizationPercent(result)!, 50);
+    assertClose(result.cumulativeAvailableGridCapacityEnergyKWh, 1000 / 3600);
+    assertClose(getGridRatedCapacityUtilizationPercent(result)!, 50);
+    assertClose(getGridAvailableCapacityUtilizationPercent(result)!, 50);
   });
 
-  it("Reset 使用的新空站状态会清空累计统计", () => {
+  it("Reset 后立即断电时额定利用率为 0%，可用利用率无分母", () => {
     const { config, state } = gridUtilizationFixture(1000, 500);
-    const elapsed = stepSimulation(state, config, 10);
-    assert.ok(elapsed.cumulativeGridImportEnergyKWh > 0);
-    const reset = createEmptyState(config);
-    assert.equal(reset.cumulativeGridImportEnergyKWh, 0);
-    assert.equal(reset.cumulativeRatedGridCapacityEnergyKWh, 0);
-    assert.equal(getGridUtilizationPercent(reset), null);
+    const result = stepSimulation(setGridControl(state, "outage"), config, 10);
+    assertClose(result.cumulativeGridImportEnergyKWh, 0);
+    assertClose(result.cumulativeRatedGridCapacityEnergyKWh, 1000 * 10 / 3600);
+    assertClose(result.cumulativeAvailableGridCapacityEnergyKWh, 0);
+    assertClose(getGridRatedCapacityUtilizationPercent(result)!, 0);
+    assert.equal(getGridAvailableCapacityUtilizationPercent(result), null);
   });
 
-  it("运行中修改额定容量后按各时段容量积分，不追溯重算历史", () => {
-    const first = gridUtilizationFixture(1000, 500);
-    const firstPeriod = stepSimulation(first.state, first.config, 10);
-    const secondConfig = { ...first.config, gridMaxPowerKw: 2000 };
-    const result = stepSimulation(firstPeriod, secondConfig, 10);
-    assertClose(result.cumulativeGridImportEnergyKWh, 500 * 20 / 3600);
-    assertClose(result.cumulativeRatedGridCapacityEnergyKWh, (1000 * 10 + 2000 * 10) / 3600);
-    assertClose(getGridUtilizationPercent(result)!, 100 / 3);
+  it("高于额定值的临时上限不会使可用容量积分超过额定容量", () => {
+    const { config, state } = gridUtilizationFixture(1000, 1000);
+    const result = stepSimulation(setGridControl(state, "limited", 1500), config, 10);
+    assertClose(result.cumulativeAvailableGridCapacityEnergyKWh, 1000 * 10 / 3600);
+    assertClose(getGridAvailableCapacityUtilizationPercent(result)!, 100);
+    assert.equal(result.hasGridDisturbanceOccurred, true);
   });
 });
 
