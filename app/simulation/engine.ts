@@ -178,6 +178,8 @@ export function createInitialState(config: SimulationConfig = baseConfig): Simul
     },
     gridPowerKw: 0,
     chargingPowerKw: 0,
+    cumulativeGridImportEnergyKWh: 0,
+    cumulativeRatedGridCapacityEnergyKWh: 0,
     randomState: config.randomSeed || 1,
     nextAutoArrivalSec: Math.max(15, 3600 / Math.max(1, config.arrivalRatePerHour)),
     events: [],
@@ -223,6 +225,12 @@ export function getEffectiveGridLimit(state: SimulationState, config: Simulation
   if (state.gridControl.mode === "outage") return 0;
   if (state.gridControl.mode === "limited") return Math.max(0, Math.min(config.gridMaxPowerKw, state.gridControl.temporaryLimitKw));
   return Math.max(0, config.gridMaxPowerKw);
+}
+
+export function getGridUtilizationPercent(state: SimulationState): number | null {
+  const ratedCapacityEnergyKWh = state.cumulativeRatedGridCapacityEnergyKWh ?? 0;
+  if (ratedCapacityEnergyKWh <= EPSILON) return null;
+  return (state.cumulativeGridImportEnergyKWh ?? 0) / ratedCapacityEnergyKWh * 100;
 }
 
 export function setGridControl(input: SimulationState, mode: GridControlMode, temporaryLimitKw?: number): SimulationState {
@@ -478,6 +486,11 @@ function updateEnergy(state: SimulationState, config: SimulationConfig) {
   state.gridPowerKw = Math.max(0, Math.min(gridLimit, load - discharge + charge));
 }
 
+function updateGridEnergyStatistics(state: SimulationState, config: SimulationConfig) {
+  state.cumulativeGridImportEnergyKWh = (state.cumulativeGridImportEnergyKWh ?? 0) + Math.max(0, state.gridPowerKw) / 3600;
+  state.cumulativeRatedGridCapacityEnergyKWh = (state.cumulativeRatedGridCapacityEnergyKWh ?? 0) + Math.max(0, config.gridMaxPowerKw) / 3600;
+}
+
 function updateIncompatibleIdle(state: SimulationState) {
   const standardWaiting = state.queue.some((id) => state.vehicles.find((vehicle) => vehicle.id === id)?.chargingClass === "standard_dc");
   for (const target of state.piles.flatMap((pile) => pile.connectors)) {
@@ -545,6 +558,7 @@ function stepOne(input: SimulationState, config: SimulationConfig): SimulationSt
   state = dispatchVehicles(state, config);
   allocateCharging(state, config);
   updateEnergy(state, config);
+  updateGridEnergyStatistics(state, config);
   updateIncompatibleIdle(state);
   sampleHistory(state, config);
   try {

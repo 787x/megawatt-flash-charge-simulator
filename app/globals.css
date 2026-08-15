@@ -349,6 +349,16 @@ input[type="range"] { width: 100%; height: 3px; accent-color: var(--cyan); }
 .metrics-panel .metric-card:nth-child(-n+4) > small { color: var(--muted); }
 .metrics-panel .metric-card:nth-child(n+5) > span { color: var(--faint); }
 .metrics-panel .metric-card:nth-child(n+5) > strong { margin-top: 4px; font-size: 16px; font-weight: 550; }
+.grid-utilization-panel { margin: 0 10px; padding: 10px 0 9px; border-bottom: 1px solid var(--line); }
+.grid-utilization-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 10px; }
+.grid-utilization-heading h3 { margin: 0; font-size: 12px; font-weight: 650; }
+.grid-utilization-heading strong { color: var(--text); font: 600 14px Consolas, "SFMono-Regular", monospace; font-variant-numeric: tabular-nums lining-nums; text-align: right; }
+.grid-utilization-panel > i { display: block; height: 4px; margin-top: 6px; background: var(--line); overflow: hidden; }
+.grid-utilization-panel > i em { display: block; height: 100%; background: var(--blue); }
+.grid-utilization-panel p { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 10px; margin: 6px 0 0; color: var(--muted); font-size: 10px; line-height: 1.35; }
+.grid-utilization-panel p span { min-width: 0; white-space: nowrap; }
+.grid-utilization-panel p b { color: var(--text); font: 500 10px Consolas, "SFMono-Regular", monospace; font-variant-numeric: tabular-nums lining-nums; }
+.grid-utilization-panel > small { display: block; margin-top: 2px; color: var(--faint); font-size: 10px; line-height: 1.35; }
 .utilization-panel { margin: 0 10px; padding: 9px 0 8px; border: 0; border-bottom: 1px solid var(--line); background: transparent; }
 .utilization-panel h3 { margin: 0 0 8px; font-size: 12px; }
 .utilization-row { margin: 0 0 8px; }

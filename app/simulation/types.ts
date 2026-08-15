@@ -217,6 +217,8 @@ export interface SimulationState {
   };
   gridPowerKw: number;
   chargingPowerKw: number;
+  cumulativeGridImportEnergyKWh: number;
+  cumulativeRatedGridCapacityEnergyKWh: number;
   randomState: number;
   nextAutoArrivalSec: number;
   events: SimulationEvent[];

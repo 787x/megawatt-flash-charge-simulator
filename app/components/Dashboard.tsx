@@ -9,6 +9,7 @@ import {
   estimateRemainingChargeTime,
   estimateVehicleWaitTime,
   getEffectiveGridLimit,
+  getGridUtilizationPercent,
   getConfigForScenario,
   setGridControl,
   setStorageEnergy,
@@ -86,6 +87,10 @@ const limitReasonNames: Record<PowerLimitReason, string> = {
 
 function formatPower(value: number) {
   return `${Math.round(value).toLocaleString("zh-CN")}\u00A0kW`;
+}
+
+function formatEnergy(value: number) {
+  return value.toLocaleString("zh-CN", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 }
 
 function formatTime(seconds: number) {
@@ -362,6 +367,8 @@ export function Dashboard() {
   const allWaits = [...flashWaits, ...standardWaits];
   const activeLimit = connectors.some((item) => item.requestedPowerKw > item.actualPowerKw + 1);
   const gridStatusLabel = state.gridControl.mode === "outage" ? "电网断电" : state.gridControl.mode === "limited" ? `限功率 ${Math.round(effectiveGridLimit)}kW` : "正常供电";
+  const gridUtilizationPercent = getGridUtilizationPercent(state);
+  const gridUtilizationProgress = Math.min(100, Math.max(0, gridUtilizationPercent ?? 0));
   const standardWaiting = state.queue.filter((id) => state.vehicles.find((vehicle) => vehicle.id === id)?.chargingClass === "standard_dc").length;
   const flashWaiting = state.queue.length - standardWaiting;
   const pile = state.piles[0];
@@ -637,6 +644,12 @@ export function Dashboard() {
             <MetricCard label="平均等待" value={formatDuration(average(allWaits))} note={`闪充 ${formatDuration(average(flashWaits))}`} />
             <MetricCard label="普通车等待" value={formatDuration(average(standardWaits))} note="仅计 A 通用枪服务能力" accent={standardWaits.length && average(standardWaits) > average(flashWaits) * 1.5 ? "red" : undefined} />
           </div>
+          <section className="grid-utilization-panel" aria-label="电网利用率累计统计">
+            <div className="grid-utilization-heading"><h3>电网利用率</h3><strong>{gridUtilizationPercent === null ? "—" : `${gridUtilizationPercent.toFixed(1)}%`}</strong></div>
+            <i role="progressbar" aria-label="电网利用率" aria-valuemin={0} aria-valuemax={100} aria-valuenow={gridUtilizationPercent === null ? undefined : Number(gridUtilizationPercent.toFixed(1))}><em style={{ width: `${gridUtilizationProgress}%` }} /></i>
+            <p><span>累计取电 <b>{formatEnergy(state.cumulativeGridImportEnergyKWh ?? 0)} kWh</b></span><span>理论容量 <b>{formatEnergy(state.cumulativeRatedGridCapacityEnergyKWh ?? 0)} kWh</b></span></p>
+            <small>统计 T+{formatTime(state.timeSec)} · 按额定接入容量累计</small>
+          </section>
           <div className="utilization-panel"><h3>枪口利用率</h3><div className="utilization-row"><div className="utilization-label"><span>A 通用枪</span><b>{state.timeSec ? Math.round(connectorA.busySec / state.timeSec * 100) : 0}%</b></div><i><em style={{ width: `${state.timeSec ? Math.min(100, connectorA.busySec / state.timeSec * 100) : 0}%` }} /></i></div><div className="utilization-row"><div className="utilization-label"><span>B 闪充专用</span><b>{state.timeSec ? Math.round(connectorB.busySec / state.timeSec * 100) : 0}%</b></div><i><em style={{ width: `${state.timeSec ? Math.min(100, connectorB.busySec / state.timeSec * 100) : 0}%` }} /></i></div><small>专用枪不兼容空闲 {formatDuration(connectorB.incompatibleIdleSec)}</small></div>
           <div className={`limit-card ${activeLimit ? "active" : ""}`}><span>{activeLimit ? "!" : "✓"}</span><div><strong>{activeLimit ? "当前存在功率限制" : "功率约束均满足"}</strong><p>{activeLimit ? `${policyNames[config.pilePolicy]}：A/B 实际功率受整桩或站级上限约束。` : "单枪 ≤1500kW · 整桩 ≤2100kW"}</p></div></div>
         </aside>
