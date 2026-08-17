@@ -222,7 +222,7 @@ function addEvent(state: SimulationState, type: SimulationEventType, message: st
   state.events = state.events.slice(0, 240);
 }
 
-export function getEffectiveGridLimit(state: SimulationState, config: SimulationConfig): number {
+export function getEffectiveGridLimit(state: SimulationState, config: SimulationRuntimeConfig): number {
   if (state.gridControl.mode === "outage") return 0;
   if (state.gridControl.mode === "limited") return Math.max(0, Math.min(config.gridMaxPowerKw, state.gridControl.temporaryLimitKw));
   return Math.max(0, config.gridMaxPowerKw);
@@ -355,7 +355,7 @@ export function addAutomaticVehicle(state: SimulationState, config: SimulationRu
   state.nextAutoArrivalSec = state.timeSec + interval;
 }
 
-function releaseVehicle(state: SimulationState, connector: Connector, vehicle: Vehicle, config: SimulationConfig) {
+function releaseVehicle(state: SimulationState, connector: Connector, vehicle: Vehicle, config: SimulationRuntimeConfig) {
   connector.currentVehicleId = undefined;
   connector.sessionId = undefined;
   connector.actualPowerKw = 0;
@@ -368,7 +368,7 @@ function releaseVehicle(state: SimulationState, connector: Connector, vehicle: V
   transition(vehicle, "departing", state.timeSec, "完成结算，驶离站点");
 }
 
-function progressPhases(state: SimulationState, config: SimulationConfig) {
+function progressPhases(state: SimulationState, config: SimulationRuntimeConfig) {
   for (const target of state.piles.flatMap((pile) => pile.connectors)) {
     target.turnoverRemainingSec = Math.max(0, target.turnoverRemainingSec - 1);
   }
@@ -415,7 +415,7 @@ function storageAvailableDischarge(state: SimulationState): number {
   return Math.min(state.storage.maxDischargePowerKw, usableThisSecond);
 }
 
-function allocateCharging(state: SimulationState, config: SimulationConfig) {
+function allocateCharging(state: SimulationState, config: SimulationRuntimeConfig) {
   const gridLimit = getEffectiveGridLimit(state, config);
   const stationAvailable = Math.max(0, Math.min(config.stationBusMaxPowerKw, gridLimit - config.baseLoadKw + storageAvailableDischarge(state)));
   let remaining = stationAvailable;
@@ -461,7 +461,7 @@ function allocateCharging(state: SimulationState, config: SimulationConfig) {
   }
 }
 
-function updateEnergy(state: SimulationState, config: SimulationConfig) {
+function updateEnergy(state: SimulationState, config: SimulationRuntimeConfig) {
   for (const target of state.piles.flatMap((pile) => pile.connectors)) {
     if (target.currentVehicleId) target.busySec += 1;
     const vehicle = state.vehicles.find((item) => item.id === target.currentVehicleId && item.status === "charging");
@@ -499,7 +499,7 @@ function updateEnergy(state: SimulationState, config: SimulationConfig) {
   state.gridPowerKw = Math.max(0, Math.min(gridLimit, load - discharge + charge));
 }
 
-function updateGridEnergyStatistics(state: SimulationState, config: SimulationConfig) {
+function updateGridEnergyStatistics(state: SimulationState, config: SimulationRuntimeConfig) {
   state.cumulativeGridImportEnergyKWh = (state.cumulativeGridImportEnergyKWh ?? 0) + Math.max(0, state.gridPowerKw) / 3600;
   state.cumulativeRatedGridCapacityEnergyKWh = (state.cumulativeRatedGridCapacityEnergyKWh ?? 0) + Math.max(0, config.gridMaxPowerKw) / 3600;
   state.cumulativeAvailableGridCapacityEnergyKWh = (state.cumulativeAvailableGridCapacityEnergyKWh ?? 0) + getEffectiveGridLimit(state, config) / 3600;
@@ -515,7 +515,7 @@ function updateIncompatibleIdle(state: SimulationState) {
   }
 }
 
-function sampleHistory(state: SimulationState, config: SimulationConfig) {
+function sampleHistory(state: SimulationState, config: SimulationRuntimeConfig) {
   const interval = Math.max(1, Math.round(config.historySampleSec ?? 5));
   if (state.timeSec % interval !== 0) return;
   const connectors = state.piles.flatMap((pile) => pile.connectors);
@@ -535,7 +535,7 @@ function sampleHistory(state: SimulationState, config: SimulationConfig) {
   state.history = state.history.slice(-Math.max(2, Math.ceil(7200 / interval)));
 }
 
-export function assertSimulationInvariants(state: SimulationState, config: SimulationConfig): void {
+export function assertSimulationInvariants(state: SimulationState, config: SimulationRuntimeConfig): void {
   const errors: string[] = [];
   const occupiedVehicles = new Set<string>();
   for (const pile of state.piles) {
@@ -563,7 +563,7 @@ export function assertSimulationInvariants(state: SimulationState, config: Simul
   if (errors.length) throw new Error(errors.join("；"));
 }
 
-function stepOne(input: SimulationState, config: SimulationConfig): SimulationState {
+function stepOne(input: SimulationState, config: SimulationRuntimeConfig): SimulationState {
   let state = structuredClone(input);
   state.timeSec += 1;
   progressPhases(state, config);
@@ -583,7 +583,7 @@ function stepOne(input: SimulationState, config: SimulationConfig): SimulationSt
   return state;
 }
 
-export function stepSimulation(input: SimulationState, config: SimulationConfig, deltaTimeSec = 1): SimulationState {
+export function stepSimulation(input: SimulationState, config: SimulationRuntimeConfig, deltaTimeSec = 1): SimulationState {
   let state = input;
   for (let second = 0; second < Math.max(1, Math.floor(deltaTimeSec)); second += 1) state = stepOne(state, config);
   return state;
@@ -632,7 +632,7 @@ export function estimateRemainingChargeTime(vehicle: Vehicle): number {
   return Math.min(24 * 3600, Math.max(0, seconds));
 }
 
-function estimatedServiceSec(vehicle: Vehicle, config: SimulationConfig): number {
+function estimatedServiceSec(vehicle: Vehicle, config: SimulationRuntimeConfig): number {
   const turnover = Math.max(0, config.turnoverSec ?? 60);
   const charge = estimateRemainingChargeTime(vehicle);
   if (vehicle.status === "moving_to_bay") return vehicle.phaseRemainingSec + config.handshakeSec + charge + config.disconnectSec + turnover;
@@ -642,7 +642,7 @@ function estimatedServiceSec(vehicle: Vehicle, config: SimulationConfig): number
   return config.movementSec + config.handshakeSec + charge + config.disconnectSec + turnover;
 }
 
-function estimatedCandidate(candidates: Vehicle[], target: Connector, config: SimulationConfig, timeSec: number): Vehicle | undefined {
+function estimatedCandidate(candidates: Vehicle[], target: Connector, config: SimulationRuntimeConfig, timeSec: number): Vehicle | undefined {
   if (!candidates.length) return undefined;
   if (target.role === "universal" && config.queuePolicy === "standard_priority_on_universal") {
     return candidates.find((vehicle) => vehicle.chargingClass === "standard_dc") ?? candidates[0];
@@ -656,7 +656,7 @@ function estimatedCandidate(candidates: Vehicle[], target: Connector, config: Si
   return candidates[0];
 }
 
-export function estimateVehicleWaitTime(vehicleId: string, state: SimulationState, config: SimulationConfig = baseConfig): WaitEstimate {
+export function estimateVehicleWaitTime(vehicleId: string, state: SimulationState, config: SimulationRuntimeConfig = baseConfig): WaitEstimate {
   const vehicle = state.vehicles.find((item) => item.id === vehicleId);
   if (!vehicle) return { expectedWaitSec: 0, confidence: "low", explanation: ["车辆不存在"] };
   if (vehicle.status !== "queued") {

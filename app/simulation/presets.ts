@@ -1,4 +1,4 @@
-import type { ChargingCurvePoint, SimulationConfig, Vehicle, VehicleModel } from "./types.js";
+import type { ChargingCurvePoint, SimulationConfig, SimulationConfigV3, Vehicle, VehicleModel } from "./types.js";
 
 export const flashCurve: ChargingCurvePoint[] = [
   { soc: 0, powerKw: 400 },

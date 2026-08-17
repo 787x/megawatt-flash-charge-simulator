@@ -11,7 +11,6 @@ import {
   getEffectiveGridLimit,
   getGridAvailableCapacityUtilizationPercent,
   getGridRatedCapacityUtilizationPercent,
-  getConfigForScenario,
   setGridControl,
   setStorageEnergy,
   stepSimulation,
@@ -21,11 +20,15 @@ import type {
   ChargingCurvePoint,
   Connector,
   SimulationConfig,
+  SimulationConfigV3,
   SimulationState,
   Vehicle,
   VehicleChargingClass,
+  VehicleModel,
   PowerLimitReason,
 } from "../simulation/types";
+import { normalizeSimulationConfig, cloneConfigV3, getScenarioConfigV3, parseSimulationConfig } from "../simulation/config-persistence";
+import { cloneChargingCurve, DEFAULT_FLASH_MODEL_ID, DEFAULT_STANDARD_MODEL_ID } from "../simulation/vehicle-models";
 
 const speedOptions = [1, 5, 10, 30, 60, 120, 300];
 const sampleOptions = [1, 5, 10, 30, 60];
@@ -142,7 +145,7 @@ function VehicleGlyph({ vehicle, compact = false, onClick }: { vehicle: Vehicle;
   );
 }
 
-function ConnectorBay({ connector, state, config, onVehicle }: { connector: Connector; state: SimulationState; config: SimulationConfig; onVehicle: (vehicle: Vehicle) => void }) {
+function ConnectorBay({ connector, state, config, onVehicle }: { connector: Connector; state: SimulationState; config: SimulationConfigV3; onVehicle: (vehicle: Vehicle) => void }) {
   const vehicle = state.vehicles.find((item) => item.id === connector.currentVehicleId);
   const isTurnover = !vehicle && connector.turnoverRemainingSec > 0;
   const standardWaiting = state.queue.filter((id) => state.vehicles.find((item) => item.id === id)?.chargingClass === "standard_dc").length;
@@ -271,8 +274,8 @@ function GridUtilizationRow({ label, accessibleLabel, percent, importEnergyKWh, 
 }
 
 export function Dashboard() {
-  const [config, setConfig] = useState<SimulationConfig>(baseConfig);
-  const [state, setState] = useState<SimulationState>(() => createInitialState(baseConfig));
+  const [config, setConfig] = useState<SimulationConfigV3>(() => cloneConfigV3(normalizeSimulationConfig(baseConfig)));
+  const [state, setState] = useState<SimulationState>(() => createInitialState(normalizeSimulationConfig(baseConfig)));
   const [running, setRunning] = useState(true);
   const [speed, setSpeed] = useState(10);
   const [tab, setTab] = useState<Tab>("车辆");
@@ -299,12 +302,10 @@ export function Dashboard() {
       if (savedTheme === "light") setTheme("light");
       if (!saved) return;
       try {
-        const parsed = JSON.parse(saved) as SimulationConfig;
-        if (parsed.schemaVersion === 2) {
-          const migrated = { ...baseConfig, ...parsed };
-          setConfig(migrated);
-          setState(createInitialState(migrated));
-        }
+        const parsed = JSON.parse(saved);
+        const normalized = normalizeSimulationConfig(parsed);
+        setConfig(normalized);
+        setState(createInitialState(normalized));
       } catch {
         localStorage.removeItem("flash-sim-config");
       }
@@ -398,17 +399,33 @@ export function Dashboard() {
   const hiddenQueueCount = Math.max(0, state.queue.length - queuePreviewLimit);
   const sourceNote = config.universalPolicyCapKw ? `A 枪启用 ${config.universalPolicyCapKw}kW 案例策略上限` : "A/B 单枪铭牌上限均为 1500kW";
 
-  const updateConfig = <K extends keyof SimulationConfig>(key: K, value: SimulationConfig[K]) => setConfig((current) => ({ ...current, [key]: value }));
+  const updateConfig = <K extends keyof SimulationConfigV3>(key: K, value: SimulationConfigV3[K]) => setConfig((current) => ({ ...current, [key]: value }));
   const updateMaxAcceptableWait = (value: number | null) => {
     updateConfig("maxAcceptableWaitSec", value);
     setState((current) => ({ ...current, vehicles: current.vehicles.map((vehicle) => ({ ...vehicle, maxAcceptableWaitSec: value })) }));
   };
-  const curveKey = curveClass === "flash_capable" ? "flashChargingCurve" : "standardChargingCurve";
+
+  const findEditTargetModel = (chargingClass: VehicleChargingClass): VehicleModel | undefined => {
+    const preferredId = chargingClass === "flash_capable" ? DEFAULT_FLASH_MODEL_ID : DEFAULT_STANDARD_MODEL_ID;
+    return config.vehicleModels.find((m) => m.id === preferredId)
+      ?? config.vehicleModels.find((m) => m.chargingClass === chargingClass);
+  };
+
+  const editTargetModel = findEditTargetModel(curveClass);
   const curveFallback = curveClass === "flash_capable" ? flashCurve : standardCurve;
-  const curve = config[curveKey] ?? curveFallback;
+  const curve = editTargetModel?.chargingCurve ?? curveFallback;
+
+  const updateVehicleModel = (modelId: string, updater: (model: VehicleModel) => VehicleModel) => {
+    setConfig((current) => ({
+      ...current,
+      vehicleModels: current.vehicleModels.map((m) => m.id === modelId ? updater(m) : m),
+    }));
+  };
+
   const setCurve = (updater: (current: ChargingCurvePoint[]) => ChargingCurvePoint[]) => {
+    if (!editTargetModel) return;
     const nextCurve = updater(curve).map((point) => ({ ...point }));
-    setConfig((current) => ({ ...current, [curveKey]: nextCurve }));
+    updateVehicleModel(editTargetModel.id, (m) => ({ ...m, chargingCurve: nextCurve }));
   };
   const updateCurvePower = (index: number, powerKw: number) => {
     const nextPower = Math.max(0, Math.min(1500, Math.round(powerKw / 10) * 10));
@@ -432,11 +449,11 @@ export function Dashboard() {
   };
 
   const selectScenario = (name: string) => {
-    const next = getConfigForScenario(name, scenarioPresets[name]);
+    const next = getScenarioConfigV3(name, scenarioPresets[name]);
     setConfig(next);
     setState(createInitialState(next));
     setRunning(true);
-    setToast(`已载入“${name}”场景`);
+    setToast(`已载入”${name}”场景`);
   };
 
   const addVehicle = () => {
@@ -468,11 +485,14 @@ export function Dashboard() {
   const importScenario = async (file?: File) => {
     if (!file) return;
     try {
-      const parsed = JSON.parse(await file.text()) as Partial<SimulationConfig>;
-      if (parsed.schemaVersion !== 2 || typeof parsed.gridMaxPowerKw !== "number" || typeof parsed.flashShare !== "number" || parsed.flashShare < 0 || parsed.flashShare > 1) throw new Error("场景版本或关键数值不合法");
-      const next = { ...baseConfig, ...parsed } as SimulationConfig;
-      setConfig(next);
-      reset(next);
+      const parsed = JSON.parse(await file.text());
+      const result = parseSimulationConfig(parsed);
+      if (!result.ok) {
+        setToast(`导入失败：${result.error}`);
+        return;
+      }
+      setConfig(result.config);
+      reset(result.config);
       setToast("场景导入成功");
     } catch (error) {
       setToast(`导入失败：${error instanceof Error ? error.message : "文件格式错误"}`);
