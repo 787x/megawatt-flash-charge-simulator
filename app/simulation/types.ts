@@ -48,6 +48,14 @@ export interface ChargingCurvePoint {
   powerKw: number;
 }
 
+export interface VehicleModel {
+  id: string;
+  name: string;
+  chargingClass: VehicleChargingClass;
+  usableBatteryCapacityKWh: number;
+  chargingCurve: ChargingCurvePoint[];
+}
+
 export interface Vehicle {
   id: string;
   name: string;
@@ -163,6 +171,11 @@ export interface SimulationConfig {
   disconnectSec: number;
   turnoverSec: number;
   historySampleSec: number;
+}
+
+export interface SimulationConfigV3 extends Omit<SimulationConfig, "schemaVersion" | "flashChargingCurve" | "standardChargingCurve"> {
+  schemaVersion: 3;
+  vehicleModels: VehicleModel[];
 }
 
 export type SimulationEventType =

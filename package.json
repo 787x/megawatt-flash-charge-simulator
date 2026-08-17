@@ -9,7 +9,7 @@
     "dev": "vinext dev",
     "build": "vinext build",
     "start": "vinext start",
-    "test": "tsc -p tsconfig.test.json && node --test --test-isolation=none work/test-dist/engine.test.js",
+    "test": "tsc -p tsconfig.test.json && node --test --test-isolation=none work/test-dist/engine.test.js work/test-dist/vehicle-models.test.js",
     "test:e2e": "node --test --test-isolation=none tests/rendered-html.test.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern work --ignore-pattern outputs",
