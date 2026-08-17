@@ -50,6 +50,8 @@ html[data-theme="light"] { color-scheme: light; }
 body { margin: 0; overflow: hidden; background: var(--bg); color: var(--text); font: 13px/1.45 Inter, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; text-rendering: optimizeLegibility; }
 button, input, select { font: inherit; }
 button, select, input { color: var(--text); }
+select option { background: var(--panel); color: var(--text); }
+select option:hover, select option:checked { background: var(--panel-raised); }
 button { cursor: pointer; }
 button, input, select { border-radius: 3px; }
 strong, output, table, .clock-block, .trend-kpis, .metric-card, .energy-summary, .connector-power-grid, .pile-output, .queue-item { font-variant-numeric: tabular-nums lining-nums; }
