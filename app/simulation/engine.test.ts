@@ -744,22 +744,21 @@ describe("VehicleModel 快照生命周期", () => {
     const config = { ...baseConfig, schemaVersion: 3 as const, vehicleModels: models };
     const state = createEmptyState(config);
     const result = addManualVehicle(state, config, {
-      chargingClass: "flash_capable",
+      vehicleModelId: "custom-flash",
       capacity: 400,
       maxPower: 1500,
       initialSoc: 30,
       targetSoc: 90,
-      vehicleModelId: "custom-flash",
     });
     const vehicle = result.vehicles.find((v) => v.id.includes("M"))!;
     assert.equal(vehicle.vehicleModelId, "custom-flash");
     assert.equal(vehicle.name, "自定义闪充车");
   });
 
-  it("旧手动调用（无 vehicleModelId）仍按类别选择默认车型", () => {
+  it("手动调用传 vehicleModelId 正确选择车型", () => {
     const state = createEmptyState(baseConfig);
     const result = addManualVehicle(state, baseConfig, {
-      chargingClass: "flash_capable",
+      vehicleModelId: DEFAULT_FLASH_MODEL_ID,
       capacity: 112,
       maxPower: 1500,
       initialSoc: 30,
@@ -776,7 +775,7 @@ describe("VehicleModel 快照生命周期", () => {
     const config = { ...baseConfig, schemaVersion: 3 as const, vehicleModels: models };
     const state = createEmptyState(config);
     const result = addManualVehicle(state, config, {
-      chargingClass: "flash_capable",
+      vehicleModelId: DEFAULT_FLASH_MODEL_ID,
       capacity: 450,
       maxPower: 1500,
       initialSoc: 30,
@@ -880,5 +879,81 @@ describe("VehicleModel 快照生命周期", () => {
     const after = result.vehicles.find((v) => v.id === flashVehicle.id)!;
     assert.deepEqual(after.chargingCurve, originalCurve);
     assert.equal(after.chargingCurve[0].powerKw, 400);
+  });
+});
+
+describe("8.5 手动车型选择与历史快照", () => {
+  it("手动传 flash B 不会错误 fallback 到 flash A", () => {
+    const models = resolveVehicleModels(baseConfig);
+    models.push({ id: "flash-b", name: "闪充B", chargingClass: "flash_capable", usableBatteryCapacityKWh: 600, chargingCurve: cloneChargingCurve(flashCurve) });
+    const config = { ...baseConfig, schemaVersion: 3 as const, vehicleModels: models };
+    const state = createEmptyState(config);
+    const result = addManualVehicle(state, config, { vehicleModelId: "flash-b", capacity: 600, maxPower: 1500, initialSoc: 20, targetSoc: 80 });
+    const v = result.vehicles.find((x) => x.id.includes("M"))!;
+    assert.equal(v.vehicleModelId, "flash-b");
+    assert.equal(v.name, "闪充B");
+    assert.equal(v.usableBatteryCapacityKWh, 600);
+  });
+
+  it("手动容量 override 不影响 VehicleModel", () => {
+    const models = resolveVehicleModels(baseConfig);
+    models[0].usableBatteryCapacityKWh = 600;
+    const config = { ...baseConfig, schemaVersion: 3 as const, vehicleModels: models };
+    const state = createEmptyState(config);
+    const result = addManualVehicle(state, config, { vehicleModelId: DEFAULT_FLASH_MODEL_ID, capacity: 450, maxPower: 1500, initialSoc: 20, targetSoc: 80 });
+    const v = result.vehicles.find((x) => x.id.includes("M"))!;
+    assert.equal(v.usableBatteryCapacityKWh, 450);
+    assert.equal(models[0].usableBatteryCapacityKWh, 600);
+    assert.equal(v.vehicleModelId, DEFAULT_FLASH_MODEL_ID);
+  });
+
+  it("批量添加 3 辆全部使用同一 vehicleModelId 且 curve 不共享", () => {
+    const models = resolveVehicleModels(baseConfig);
+    models.push({ id: "flash-b", name: "闪充B", chargingClass: "flash_capable", usableBatteryCapacityKWh: 300, chargingCurve: cloneChargingCurve(flashCurve) });
+    const config = { ...baseConfig, schemaVersion: 3 as const, vehicleModels: models };
+    let state = createEmptyState(config);
+    for (let i = 0; i < 3; i++) state = addManualVehicle(state, config, { vehicleModelId: "flash-b", capacity: 300, maxPower: 1500, initialSoc: 20, targetSoc: 80 });
+    const manuals = state.vehicles.filter((v) => v.id.includes("M"));
+    assert.equal(manuals.length, 3);
+    assert.ok(manuals.every((v) => v.vehicleModelId === "flash-b"));
+    assert.notEqual(manuals[0].chargingCurve, manuals[1].chargingCurve);
+    assert.notEqual(manuals[1].chargingCurve, manuals[2].chargingCurve);
+  });
+
+  it("重命名后旧 Vehicle 保持原名，新 Vehicle 使用新名", () => {
+    const models = resolveVehicleModels(baseConfig);
+    models.push({ id: "flash-x", name: "原名", chargingClass: "flash_capable", usableBatteryCapacityKWh: 200, chargingCurve: cloneChargingCurve(flashCurve) });
+    const config1 = { ...baseConfig, schemaVersion: 3 as const, vehicleModels: models };
+    let state = createEmptyState(config1);
+    state = addManualVehicle(state, config1, { vehicleModelId: "flash-x", capacity: 200, maxPower: 1500, initialSoc: 20, targetSoc: 80 });
+    const v1 = state.vehicles.find((x) => x.id.includes("M"))!;
+    assert.equal(v1.name, "原名");
+    const renamed = models.map((m) => m.id === "flash-x" ? { ...m, name: "新名" } : m);
+    const config2 = { ...config1, vehicleModels: renamed };
+    state = addManualVehicle(state, config2, { vehicleModelId: "flash-x", capacity: 200, maxPower: 1500, initialSoc: 20, targetSoc: 80 });
+    const v2 = state.vehicles.filter((x) => x.id.includes("M"))[1];
+    assert.equal(v1.name, "原名");
+    assert.equal(v2.name, "新名");
+    assert.equal(v1.vehicleModelId, v2.vehicleModelId);
+  });
+
+  it("类别切换后旧 Vehicle 保持原类别兼容性", () => {
+    const models = resolveVehicleModels(baseConfig);
+    models.push({ id: "std-x", name: "普通X", chargingClass: "standard_dc", usableBatteryCapacityKWh: 100, chargingCurve: cloneChargingCurve(standardCurve) });
+    const config1 = { ...baseConfig, schemaVersion: 3 as const, vehicleModels: models };
+    let state = createEmptyState(config1);
+    state = addManualVehicle(state, config1, { vehicleModelId: "std-x", capacity: 100, maxPower: 520, initialSoc: 20, targetSoc: 80 });
+    const v1 = state.vehicles.find((x) => x.id.includes("M"))!;
+    assert.equal(v1.chargingClass, "standard_dc");
+    const [a, b] = blankState().piles[0].connectors;
+    assert.equal(isVehicleEligibleForConnector(v1, b), false);
+    const changed = models.map((m) => m.id === "std-x" ? { ...m, chargingClass: "flash_capable" as const } : m);
+    const config2 = { ...config1, vehicleModels: changed };
+    state = addManualVehicle(state, config2, { vehicleModelId: "std-x", capacity: 100, maxPower: 1500, initialSoc: 20, targetSoc: 80 });
+    const v2 = state.vehicles.filter((x) => x.id.includes("M"))[1];
+    assert.equal(v1.chargingClass, "standard_dc");
+    assert.equal(v2.chargingClass, "flash_capable");
+    assert.equal(isVehicleEligibleForConnector(v1, b), false);
+    assert.equal(isVehicleEligibleForConnector(v2, b), true);
   });
 });

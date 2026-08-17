@@ -268,3 +268,10 @@ export function changeModelClass(model: VehicleModel, newClass: VehicleChargingC
 export function restoreDefaultCurve(model: VehicleModel): VehicleModel {
   return { ...model, chargingCurve: cloneDefaultChargingCurve(model.chargingClass) };
 }
+
+export function resolveVehicleModelId(models: VehicleModel[], preferredId?: string): string {
+  if (preferredId && models.some((m) => m.id === preferredId)) return preferredId;
+  const defaultFlash = models.find((m) => m.id === DEFAULT_FLASH_MODEL_ID);
+  if (defaultFlash) return defaultFlash.id;
+  return models[0]?.id ?? "";
+}

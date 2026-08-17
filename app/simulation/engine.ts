@@ -349,7 +349,7 @@ export function addAutomaticVehicle(state: SimulationState, config: SimulationRu
   state.vehicles.push(vehicle);
   state.queue.push(vehicle.id);
   state.totalArrivals += 1;
-  addEvent(state, "vehicle_arrived", `${vehicle.id} 到达入口（${chargingClass === "flash_capable" ? "闪充兼容" : "普通直流"}）`);
+  addEvent(state, "vehicle_arrived", `${vehicle.id}（${vehicle.name}）到达入口`);
   const mean = 3600 / Math.max(1, config.arrivalRatePerHour);
   const interval = Math.max(8, -Math.log(Math.max(0.001, 1 - nextRandom(state))) * mean);
   state.nextAutoArrivalSec = state.timeSec + interval;
@@ -589,16 +589,10 @@ export function stepSimulation(input: SimulationState, config: SimulationRuntime
   return state;
 }
 
-export function addManualVehicle(state: SimulationState, config: SimulationRuntimeConfig, input: { chargingClass: "flash_capable" | "standard_dc"; capacity: number; maxPower: number; initialSoc: number; targetSoc: number; vehicleModelId?: string }): SimulationState {
+export function addManualVehicle(state: SimulationState, config: SimulationRuntimeConfig, input: { vehicleModelId: string; capacity: number; maxPower: number; initialSoc: number; targetSoc: number }): SimulationState {
   const next = structuredClone(state);
   const models = resolveVehicleModels(config);
-  let selectedModel: VehicleModel;
-  if (input.vehicleModelId) {
-    const found = models.find((m) => m.id === input.vehicleModelId);
-    selectedModel = found ?? models.find((m) => m.chargingClass === input.chargingClass) ?? models[0];
-  } else {
-    selectedModel = models.find((m) => m.chargingClass === input.chargingClass) ?? models[0];
-  }
+  const selectedModel = models.find((m) => m.id === input.vehicleModelId) ?? models[0];
   const vehicle = makeVehicle(`${selectedModel.chargingClass === "flash_capable" ? "F" : "S"}-M${String(next.vehicles.length + 1).padStart(2, "0")}`, selectedModel, next.timeSec, input.initialSoc);
   vehicle.usableBatteryCapacityKWh = input.capacity;
   vehicle.maxChargingPowerKw = input.maxPower;
@@ -609,7 +603,7 @@ export function addManualVehicle(state: SimulationState, config: SimulationRunti
   next.vehicles.push(vehicle);
   next.queue.push(vehicle.id);
   next.totalArrivals += 1;
-  addEvent(next, "vehicle_queued", `${vehicle.id} 已手动加入队列`, "success");
+  addEvent(next, "vehicle_queued", `${vehicle.id}（${vehicle.name}）已手动加入队列`, "success");
   return dispatchVehicles(next, config);
 }
 

@@ -462,6 +462,14 @@ tbody tr:hover { background: var(--cyan-soft); }
 .model-tool-btn { padding: 4px 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font-size: 11px; white-space: nowrap; cursor: pointer; transition: border-color .15s, background .15s; }
 .model-tool-btn:hover { border-color: var(--line-strong); background: var(--panel-raised); }
 .model-tool-btn.restore-btn { color: var(--cyan); border-color: var(--line-strong); }
+.vehicle-model-cell { max-width: 160px; }
+.vehicle-model-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 550; }
+.vehicle-model-cell small { display: block; color: var(--faint); font-size: 10px; }
+.manual-model-select { display: flex; align-items: center; gap: 8px; padding: 0 0 8px; }
+.manual-model-select > span { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.manual-model-select select { flex: 1; min-width: 0; padding: 6px 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font-size: 12px; }
+.vehicle-session-model { display: inline-block; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; color: var(--muted); font-size: 11px; }
+.vehicle-session-head small { color: var(--faint); font-size: 10px; }
 .model-modal { max-width: 380px; }
 .field-error { color: var(--red); font-size: 11px; margin: 4px 0 0; }
 .sources { display: grid; grid-template-columns: 280px 1fr; gap: 18px; padding: 14px; }

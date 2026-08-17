@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { baseConfig, flashCurve, standardCurve } from "./presets.js";
-import type { SimulationConfig } from "./types.js";
+import type { SimulationConfig, VehicleModel } from "./types.js";
 import {
   canChangeModelClass,
   changeModelClass,
@@ -17,6 +17,7 @@ import {
   defaultVehicleModels,
   migrateConfigV2ToV3,
   renameVehicleModel,
+  resolveVehicleModelId,
   restoreDefaultCurve,
   validateVehicleModels,
 } from "./vehicle-models.js";
@@ -396,5 +397,44 @@ describe("restoreDefaultCurve", () => {
     const model = { ...defaultVehicleModels[1], chargingClass: "flash_capable" as const };
     const restored = restoreDefaultCurve(model);
     assert.deepEqual(restored.chargingCurve, flashCurve);
+  });
+});
+
+describe("resolveVehicleModelId", () => {
+  it("preferredId 存在时直接使用", () => {
+    const models = cloneVehicleModels(defaultVehicleModels);
+    assert.equal(resolveVehicleModelId(models, DEFAULT_STANDARD_MODEL_ID), DEFAULT_STANDARD_MODEL_ID);
+  });
+
+  it("preferredId 不存在，default-flash 存在时使用 default-flash", () => {
+    const models = cloneVehicleModels(defaultVehicleModels);
+    assert.equal(resolveVehicleModelId(models, "nonexistent"), DEFAULT_FLASH_MODEL_ID);
+  });
+
+  it("preferredId 不存在，default-flash 也不存在时使用第一个模型", () => {
+    const models: VehicleModel[] = [
+      { id: "flash-a", name: "闪充A", chargingClass: "flash_capable", usableBatteryCapacityKWh: 100, chargingCurve: cloneChargingCurve(flashCurve) },
+      { id: "std-a", name: "普通A", chargingClass: "standard_dc", usableBatteryCapacityKWh: 80, chargingCurve: cloneChargingCurve(standardCurve) },
+    ];
+    assert.equal(resolveVehicleModelId(models, "nonexistent"), "flash-a");
+  });
+
+  it("preferredId 为空字符串时回退到 default-flash 或第一个", () => {
+    const models = cloneVehicleModels(defaultVehicleModels);
+    assert.equal(resolveVehicleModelId(models, ""), DEFAULT_FLASH_MODEL_ID);
+    const custom: VehicleModel[] = [
+      { id: "x", name: "X", chargingClass: "flash_capable", usableBatteryCapacityKWh: 100, chargingCurve: cloneChargingCurve(flashCurve) },
+    ];
+    assert.equal(resolveVehicleModelId(custom, ""), "x");
+  });
+
+  it("无 preferredId 时回退到 default-flash", () => {
+    const models = cloneVehicleModels(defaultVehicleModels);
+    assert.equal(resolveVehicleModelId(models), DEFAULT_FLASH_MODEL_ID);
+  });
+
+  it("空数组返回空字符串不 crash", () => {
+    assert.equal(resolveVehicleModelId([]), "");
+    assert.equal(resolveVehicleModelId([], "anything"), "");
   });
 });
