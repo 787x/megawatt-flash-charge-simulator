@@ -13,9 +13,9 @@ export const DEFAULT_STANDARD_MODEL_ID = "default-standard";
 export const DEFAULT_FLASH_CAPACITY_KWH = 112;
 export const DEFAULT_STANDARD_CAPACITY_KWH = 76;
 
-const VEHICLE_MODEL_NAME_MAX_LENGTH = 40;
-const CAPACITY_MIN_KWH = 20;
-const CAPACITY_MAX_KWH = 2000;
+export const CAPACITY_MIN_KWH = 20;
+export const CAPACITY_MAX_KWH = 2000;
+export const MODEL_NAME_MAX_LENGTH = 40;
 
 let idCounter = 0;
 
@@ -119,8 +119,8 @@ export function validateVehicleModels(models: VehicleModel[]): VehicleModelValid
     const trimmedName = typeof model.name === "string" ? model.name.trim() : "";
     if (trimmedName === "") {
       errors.push({ type: "empty_name", message: `车型名称为空`, modelId: model.id });
-    } else if (trimmedName.length > VEHICLE_MODEL_NAME_MAX_LENGTH) {
-      errors.push({ type: "name_too_long", message: `车型名称超过 ${VEHICLE_MODEL_NAME_MAX_LENGTH} 字符: ${model.name}`, modelId: model.id });
+    } else if (trimmedName.length > MODEL_NAME_MAX_LENGTH) {
+      errors.push({ type: "name_too_long", message: `车型名称超过 ${MODEL_NAME_MAX_LENGTH} 字符: ${model.name}`, modelId: model.id });
     } else {
       const lowerName = trimmedName.toLowerCase();
       if (nameSet.has(lowerName)) {
@@ -200,4 +200,71 @@ export function migrateConfigV2ToV3(v2: SimulationConfig): { schemaVersion: 3; v
       },
     ],
   };
+}
+
+export function isModelNameValid(name: string): boolean {
+  const trimmed = name.trim();
+  return trimmed.length > 0 && trimmed.length <= MODEL_NAME_MAX_LENGTH;
+}
+
+export function isModelNameUnique(models: VehicleModel[], name: string, excludeId?: string): boolean {
+  const lower = name.trim().toLowerCase();
+  return !models.some((m) => m.id !== excludeId && m.name.trim().toLowerCase() === lower);
+}
+
+export function createVehicleModel(
+  name: string,
+  chargingClass: VehicleChargingClass,
+  capacityKWh: number,
+): { ok: true; model: VehicleModel } | { ok: false; error: string } {
+  const trimmedName = name.trim();
+  if (!isModelNameValid(trimmedName)) {
+    return { ok: false, error: trimmedName.length === 0 ? "车型名称不能为空" : `车型名称超过 ${MODEL_NAME_MAX_LENGTH} 字符` };
+  }
+  if (!Number.isFinite(capacityKWh) || capacityKWh < CAPACITY_MIN_KWH || capacityKWh > CAPACITY_MAX_KWH) {
+    return { ok: false, error: `容量必须在 ${CAPACITY_MIN_KWH}–${CAPACITY_MAX_KWH} kWh 之间` };
+  }
+  return {
+    ok: true,
+    model: {
+      id: createVehicleModelId(),
+      name: trimmedName,
+      chargingClass,
+      usableBatteryCapacityKWh: capacityKWh,
+      chargingCurve: cloneDefaultChargingCurve(chargingClass),
+    },
+  };
+}
+
+export function renameVehicleModel(
+  models: VehicleModel[],
+  modelId: string,
+  newName: string,
+): { ok: true; models: VehicleModel[] } | { ok: false; error: string } {
+  const trimmedName = newName.trim();
+  if (!isModelNameValid(trimmedName)) {
+    return { ok: false, error: trimmedName.length === 0 ? "车型名称不能为空" : `车型名称超过 ${MODEL_NAME_MAX_LENGTH} 字符` };
+  }
+  if (!isModelNameUnique(models, trimmedName, modelId)) {
+    return { ok: false, error: `名称"${trimmedName}"已被使用` };
+  }
+  return {
+    ok: true,
+    models: models.map((m) => m.id === modelId ? { ...m, name: trimmedName } : m),
+  };
+}
+
+export function canChangeModelClass(models: VehicleModel[], modelId: string, newClass: VehicleChargingClass): boolean {
+  const model = models.find((m) => m.id === modelId);
+  if (!model || model.chargingClass === newClass) return false;
+  const otherClassCount = models.filter((m) => m.chargingClass === model.chargingClass && m.id !== modelId).length;
+  return otherClassCount >= 1;
+}
+
+export function changeModelClass(model: VehicleModel, newClass: VehicleChargingClass): VehicleModel {
+  return { ...model, chargingClass: newClass };
+}
+
+export function restoreDefaultCurve(model: VehicleModel): VehicleModel {
+  return { ...model, chargingCurve: cloneDefaultChargingCurve(model.chargingClass) };
 }

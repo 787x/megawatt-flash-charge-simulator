@@ -448,6 +448,20 @@ tbody tr:hover { background: var(--cyan-soft); }
 .curve-table input { width: 49px; padding: 3px; border: 1px solid var(--line); background: var(--bg); font: 11px Consolas, "SFMono-Regular", monospace; }
 .curve-table button { border: 0; padding: 4px; background: transparent; color: var(--red); }
 .curve-table > button { width: 100%; color: var(--cyan); }
+.model-toolbar { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.model-select-row { display: flex; align-items: center; gap: 6px; width: 100%; }
+.model-select-row > span { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.model-select-row select { flex: 1; min-width: 0; padding: 5px 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font-size: 12px; text-overflow: ellipsis; overflow: hidden; }
+.model-props-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.model-props-row label { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11px; white-space: nowrap; }
+.model-props-row select { padding: 4px 6px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font-size: 11px; }
+.model-props-row input[type="number"] { width: 58px; padding: 4px 6px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: 11px Consolas, "SFMono-Regular", monospace; }
+.model-props-row small { color: var(--faint); font-size: 10px; }
+.model-tool-btn { padding: 4px 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font-size: 11px; white-space: nowrap; cursor: pointer; transition: border-color .15s, background .15s; }
+.model-tool-btn:hover { border-color: var(--line-strong); background: var(--panel-raised); }
+.model-tool-btn.restore-btn { color: var(--cyan); border-color: var(--line-strong); }
+.model-modal { max-width: 380px; }
+.field-error { color: var(--red); font-size: 11px; margin: 4px 0 0; }
 .sources { display: grid; grid-template-columns: 280px 1fr; gap: 18px; padding: 14px; }
 .source-tag { display: inline-block; padding: 3px 5px; border: 1px solid var(--line); }
 .source-tag.official { color: var(--blue); }

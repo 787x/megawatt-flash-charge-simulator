@@ -3,16 +3,21 @@ import { describe, it } from "node:test";
 import { baseConfig, flashCurve, standardCurve } from "./presets.js";
 import type { SimulationConfig } from "./types.js";
 import {
+  canChangeModelClass,
+  changeModelClass,
   cloneChargingCurve,
   cloneDefaultChargingCurve,
   cloneVehicleModel,
   cloneVehicleModels,
+  createVehicleModel,
   DEFAULT_FLASH_CAPACITY_KWH,
   DEFAULT_FLASH_MODEL_ID,
   DEFAULT_STANDARD_CAPACITY_KWH,
   DEFAULT_STANDARD_MODEL_ID,
   defaultVehicleModels,
   migrateConfigV2ToV3,
+  renameVehicleModel,
+  restoreDefaultCurve,
   validateVehicleModels,
 } from "./vehicle-models.js";
 
@@ -252,5 +257,144 @@ describe("车型目录校验", () => {
   it("合法目录返回空错误数组", () => {
     const errors = validateVehicleModels(cloneVehicleModels(defaultVehicleModels));
     assert.equal(errors.length, 0);
+  });
+});
+
+describe("createVehicleModel", () => {
+  it("新建 flash 车型：默认容量112，curve 为 flash 模板克隆", () => {
+    const result = createVehicleModel("测试闪充", "flash_capable", 112);
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.equal(result.model.chargingClass, "flash_capable");
+    assert.equal(result.model.usableBatteryCapacityKWh, 112);
+    assert.deepEqual(result.model.chargingCurve, flashCurve);
+    assert.equal(result.model.name, "测试闪充");
+    assert.ok(result.model.id.startsWith("vm-"));
+  });
+
+  it("新建 standard 车型：默认容量76，curve 为 standard 模板克隆", () => {
+    const result = createVehicleModel("测试普通", "standard_dc", 76);
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.equal(result.model.usableBatteryCapacityKWh, 76);
+    assert.deepEqual(result.model.chargingCurve, standardCurve);
+  });
+
+  it("两个新车型 curve 不共享引用", () => {
+    const r1 = createVehicleModel("A", "flash_capable", 100);
+    const r2 = createVehicleModel("B", "flash_capable", 200);
+    assert.equal(r1.ok, true);
+    assert.equal(r2.ok, true);
+    if (!r1.ok || !r2.ok) return;
+    assert.notEqual(r1.model.chargingCurve, r2.model.chargingCurve);
+    assert.notEqual(r1.model.chargingCurve[0], r2.model.chargingCurve[0]);
+    r1.model.chargingCurve[0].powerKw = 9999;
+    assert.equal(r2.model.chargingCurve[0].powerKw, flashCurve[0].powerKw);
+  });
+
+  it("名称为空拒绝", () => {
+    const r1 = createVehicleModel("", "flash_capable", 100);
+    assert.equal(r1.ok, false);
+    const r2 = createVehicleModel("   ", "flash_capable", 100);
+    assert.equal(r2.ok, false);
+  });
+
+  it("容量越界拒绝", () => {
+    assert.equal(createVehicleModel("X", "flash_capable", 19).ok, false);
+    assert.equal(createVehicleModel("X", "flash_capable", 2001).ok, false);
+    assert.equal(createVehicleModel("X", "flash_capable", NaN).ok, false);
+    assert.equal(createVehicleModel("X", "flash_capable", Infinity).ok, false);
+    assert.equal(createVehicleModel("X", "flash_capable", 20).ok, true);
+    assert.equal(createVehicleModel("X", "flash_capable", 2000).ok, true);
+  });
+});
+
+describe("renameVehicleModel", () => {
+  it("重命名改变 name 但不改变 id", () => {
+    const models = cloneVehicleModels(defaultVehicleModels);
+    const result = renameVehicleModel(models, DEFAULT_FLASH_MODEL_ID, "新名称");
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    const renamed = result.models.find((m) => m.id === DEFAULT_FLASH_MODEL_ID)!;
+    assert.equal(renamed.name, "新名称");
+    assert.equal(renamed.id, DEFAULT_FLASH_MODEL_ID);
+  });
+
+  it("空名称拒绝", () => {
+    const models = cloneVehicleModels(defaultVehicleModels);
+    assert.equal(renameVehicleModel(models, DEFAULT_FLASH_MODEL_ID, "").ok, false);
+    assert.equal(renameVehicleModel(models, DEFAULT_FLASH_MODEL_ID, "   ").ok, false);
+  });
+
+  it("重名拒绝", () => {
+    const models = cloneVehicleModels(defaultVehicleModels);
+    assert.equal(renameVehicleModel(models, DEFAULT_FLASH_MODEL_ID, "普通直流快充车辆").ok, false);
+  });
+
+  it("大小写不敏感重名拒绝", () => {
+    const models = cloneVehicleModels(defaultVehicleModels);
+    assert.equal(renameVehicleModel(models, DEFAULT_FLASH_MODEL_ID, "普通直流快充车辆".toUpperCase()).ok, false);
+  });
+
+  it("改回自己的名字允许", () => {
+    const models = cloneVehicleModels(defaultVehicleModels);
+    const result = renameVehicleModel(models, DEFAULT_FLASH_MODEL_ID, "兆瓦闪充车辆");
+    assert.equal(result.ok, true);
+  });
+});
+
+describe("canChangeModelClass / changeModelClass", () => {
+  it("standard 切 flash：curve 保持、capacity 保持、id 保持", () => {
+    const models = cloneVehicleModels(defaultVehicleModels);
+    const extra = createVehicleModel("额外普通", "standard_dc", 100);
+    assert.equal(extra.ok, true);
+    if (!extra.ok) return;
+    models.push(extra.model);
+    assert.equal(canChangeModelClass(models, DEFAULT_STANDARD_MODEL_ID, "flash_capable"), true);
+    const changed = changeModelClass(models.find((m) => m.id === DEFAULT_STANDARD_MODEL_ID)!, "flash_capable");
+    assert.equal(changed.chargingClass, "flash_capable");
+    assert.equal(changed.usableBatteryCapacityKWh, DEFAULT_STANDARD_CAPACITY_KWH);
+    assert.equal(changed.id, DEFAULT_STANDARD_MODEL_ID);
+    assert.deepEqual(changed.chargingCurve, standardCurve);
+  });
+
+  it("最后一个 flash 不允许切走", () => {
+    const models = cloneVehicleModels(defaultVehicleModels);
+    assert.equal(canChangeModelClass(models, DEFAULT_FLASH_MODEL_ID, "standard_dc"), false);
+  });
+
+  it("最后一个 standard 不允许切走", () => {
+    const models = cloneVehicleModels(defaultVehicleModels);
+    assert.equal(canChangeModelClass(models, DEFAULT_STANDARD_MODEL_ID, "flash_capable"), false);
+  });
+
+  it("有多个 flash 时允许切走一个", () => {
+    const models = cloneVehicleModels(defaultVehicleModels);
+    const extra = createVehicleModel("额外闪充", "flash_capable", 200);
+    assert.equal(extra.ok, true);
+    if (!extra.ok) return;
+    models.push(extra.model);
+    assert.equal(canChangeModelClass(models, DEFAULT_FLASH_MODEL_ID, "standard_dc"), true);
+  });
+
+  it("已是目标类别时返回 false", () => {
+    const models = cloneVehicleModels(defaultVehicleModels);
+    assert.equal(canChangeModelClass(models, DEFAULT_FLASH_MODEL_ID, "flash_capable"), false);
+  });
+});
+
+describe("restoreDefaultCurve", () => {
+  it("standard 恢复 → standardCurve", () => {
+    const model = { ...defaultVehicleModels[1], chargingCurve: [{ soc: 0, powerKw: 999 }, { soc: 100, powerKw: 0 }] };
+    const restored = restoreDefaultCurve(model);
+    assert.deepEqual(restored.chargingCurve, standardCurve);
+    assert.equal(restored.id, model.id);
+    assert.equal(restored.name, model.name);
+  });
+
+  it("切到 flash 后恢复 → flashCurve", () => {
+    const model = { ...defaultVehicleModels[1], chargingClass: "flash_capable" as const };
+    const restored = restoreDefaultCurve(model);
+    assert.deepEqual(restored.chargingCurve, flashCurve);
   });
 });
