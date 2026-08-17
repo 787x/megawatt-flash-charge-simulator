@@ -2,6 +2,7 @@ import { flashCurve, standardCurve } from "./presets.js";
 import type {
   ChargingCurvePoint,
   SimulationConfig,
+  SimulationConfigV3,
   VehicleChargingClass,
   VehicleModel,
 } from "./types.js";
@@ -146,6 +147,30 @@ export function validateVehicleModels(models: VehicleModel[]): VehicleModelValid
   }
 
   return errors;
+}
+
+export type SimulationRuntimeConfig = SimulationConfig | SimulationConfigV3;
+
+export function resolveVehicleModels(config: SimulationRuntimeConfig): VehicleModel[] {
+  if (config.schemaVersion === 3) {
+    return cloneVehicleModels(config.vehicleModels);
+  }
+  return [
+    {
+      id: DEFAULT_FLASH_MODEL_ID,
+      name: "兆瓦闪充车辆",
+      chargingClass: "flash_capable",
+      usableBatteryCapacityKWh: DEFAULT_FLASH_CAPACITY_KWH,
+      chargingCurve: cloneChargingCurve(config.flashChargingCurve),
+    },
+    {
+      id: DEFAULT_STANDARD_MODEL_ID,
+      name: "普通直流快充车辆",
+      chargingClass: "standard_dc",
+      usableBatteryCapacityKWh: DEFAULT_STANDARD_CAPACITY_KWH,
+      chargingCurve: cloneChargingCurve(config.standardChargingCurve),
+    },
+  ];
 }
 
 export function migrateConfigV2ToV3(v2: SimulationConfig): { schemaVersion: 3; vehicleModels: VehicleModel[] } {

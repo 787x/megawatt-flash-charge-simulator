@@ -1,4 +1,4 @@
-import type { ChargingCurvePoint, SimulationConfig, Vehicle } from "./types.js";
+import type { ChargingCurvePoint, SimulationConfig, Vehicle, VehicleModel } from "./types.js";
 
 export const flashCurve: ChargingCurvePoint[] = [
   { soc: 0, powerKw: 400 },
@@ -64,18 +64,19 @@ export const scenarioPresets: Record<string, Partial<SimulationConfig>> = {
 
 export function makeVehicle(
   id: string,
-  chargingClass: "flash_capable" | "standard_dc",
+  model: VehicleModel,
   arrivalTimeSec: number,
   soc?: number,
 ): Vehicle {
-  const isFlash = chargingClass === "flash_capable";
+  const isFlash = model.chargingClass === "flash_capable";
   const initialSoc = soc ?? (isFlash ? 18 : 27);
   return {
     id,
-    name: isFlash ? "兆瓦闪充车辆" : "普通直流快充车辆",
-    chargingClass,
+    vehicleModelId: model.id,
+    name: model.name,
+    chargingClass: model.chargingClass,
     status: arrivalTimeSec > 0 ? "scheduled" : "queued",
-    usableBatteryCapacityKWh: isFlash ? 112 : 76,
+    usableBatteryCapacityKWh: model.usableBatteryCapacityKWh,
     initialSocPercent: initialSoc,
     currentSocPercent: initialSoc,
     targetSocPercent: isFlash ? 82 : 88,
@@ -85,7 +86,7 @@ export function makeVehicle(
     chargingEfficiency: 0.94,
     batteryTemperatureC: 27,
     batteryHealthPercent: 96,
-    chargingCurve: isFlash ? flashCurve.map((point) => ({ ...point })) : standardCurve.map((point) => ({ ...point })),
+    chargingCurve: model.chargingCurve.map((point) => ({ ...point })),
     arrivalTimeSec,
     queuedAtSec: arrivalTimeSec <= 0 ? 0 : undefined,
     maxAcceptableWaitSec: 30 * 60,

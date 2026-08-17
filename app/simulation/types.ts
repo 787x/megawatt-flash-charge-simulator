@@ -58,6 +58,7 @@ export interface VehicleModel {
 
 export interface Vehicle {
   id: string;
+  vehicleModelId: string;
   name: string;
   chargingClass: VehicleChargingClass;
   status: VehicleStatus;

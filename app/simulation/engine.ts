@@ -12,8 +12,10 @@ import type {
   SimulationEventType,
   SimulationState,
   Vehicle,
+  VehicleModel,
   WaitEstimate,
 } from "./types.js";
+import { resolveVehicleModels, type SimulationRuntimeConfig } from "./vehicle-models.js";
 
 const EPSILON = 0.001;
 
@@ -102,7 +104,7 @@ export function allocatePilePower(
   };
 }
 
-function connector(role: "universal" | "flash_dedicated", config: SimulationConfig): Connector {
+function connector(role: "universal" | "flash_dedicated", config: SimulationRuntimeConfig): Connector {
   const suffix = role === "universal" ? "A" : "B";
   return {
     id: `P1-${suffix}`,
@@ -125,20 +127,17 @@ function connector(role: "universal" | "flash_dedicated", config: SimulationConf
   };
 }
 
-function applyConfiguredCurve(vehicle: Vehicle, config: SimulationConfig) {
-  const configured = vehicle.chargingClass === "flash_capable" ? config.flashChargingCurve : config.standardChargingCurve;
-  if (configured?.length) vehicle.chargingCurve = configured.map((point) => ({ ...point }));
-  vehicle.maxAcceptableWaitSec = config.maxAcceptableWaitSec ?? null;
-}
-
-export function createInitialState(config: SimulationConfig = baseConfig): SimulationState {
+export function createInitialState(config: SimulationRuntimeConfig = baseConfig): SimulationState {
+  const models = resolveVehicleModels(config);
+  const flashModel = models.find((m) => m.chargingClass === "flash_capable")!;
+  const standardModel = models.find((m) => m.chargingClass === "standard_dc")!;
   const vehicles = [
-    makeVehicle("F-001", "flash_capable", 0, 18),
-    makeVehicle("S-001", "standard_dc", 0, 31),
-    makeVehicle("S-002", "standard_dc", 12, 22),
-    makeVehicle("F-002", "flash_capable", 35, 42),
+    makeVehicle("F-001", flashModel, 0, 18),
+    makeVehicle("S-001", standardModel, 0, 31),
+    makeVehicle("S-002", standardModel, 12, 22),
+    makeVehicle("F-002", flashModel, 35, 42),
   ];
-  vehicles.forEach((vehicle) => applyConfiguredCurve(vehicle, config));
+  vehicles.forEach((vehicle) => { vehicle.maxAcceptableWaitSec = config.maxAcceptableWaitSec ?? null; });
   const pile: ChargingPile = {
     id: "P1",
     name: "01# 滑轨悬吊双枪桩",
@@ -192,7 +191,7 @@ export function createInitialState(config: SimulationConfig = baseConfig): Simul
   return dispatchVehicles(state, config);
 }
 
-export function createEmptyState(config: SimulationConfig = baseConfig): SimulationState {
+export function createEmptyState(config: SimulationRuntimeConfig = baseConfig): SimulationState {
   const state = createInitialState(config);
   state.vehicles = [];
   state.queue = [];
@@ -265,7 +264,7 @@ function transition(vehicle: Vehicle, status: Vehicle["status"], timeSec: number
   vehicle.timeline.push({ timeSec, status, note });
 }
 
-function candidateForConnector(state: SimulationState, connector: Connector, excluded: Set<string>, config: SimulationConfig): Vehicle | undefined {
+function candidateForConnector(state: SimulationState, connector: Connector, excluded: Set<string>, config: SimulationRuntimeConfig): Vehicle | undefined {
   const candidates = state.queue
     .map((id) => state.vehicles.find((vehicle) => vehicle.id === id))
     .filter((vehicle): vehicle is Vehicle => Boolean(vehicle && vehicle.status === "queued" && !excluded.has(vehicle.id)))
@@ -287,7 +286,7 @@ function candidateForConnector(state: SimulationState, connector: Connector, exc
   return candidates[0];
 }
 
-export function dispatchVehicles(input: SimulationState, config: SimulationConfig): SimulationState {
+export function dispatchVehicles(input: SimulationState, config: SimulationRuntimeConfig): SimulationState {
   const state = structuredClone(input);
   const free = state.piles.flatMap((pile) => pile.enabled ? pile.connectors.filter((item) => item.enabled && !item.currentVehicleId && item.turnoverRemainingSec <= 0) : []);
   const ordered = [...free].sort((a, b) => (a.role === b.role ? 0 : a.role === "flash_dedicated" ? -1 : 1));
@@ -330,12 +329,17 @@ function nextRandom(state: SimulationState): number {
   return state.randomState / 4294967296;
 }
 
-export function addAutomaticVehicle(state: SimulationState, config: SimulationConfig) {
+export function addAutomaticVehicle(state: SimulationState, config: SimulationRuntimeConfig) {
+  const models = resolveVehicleModels(config);
   const count = state.vehicles.length + 1;
-  const chargingClass = nextRandom(state) < config.flashShare ? "flash_capable" : "standard_dc";
+  const chargingClass = nextRandom(state) < (config as SimulationConfig).flashShare ? "flash_capable" : "standard_dc";
+  const eligibleModels = models.filter((m) => m.chargingClass === chargingClass);
+  const selectedModel = eligibleModels.length <= 1
+    ? eligibleModels[0]
+    : eligibleModels[Math.floor(nextRandom(state) * eligibleModels.length)];
   const prefix = chargingClass === "flash_capable" ? "F" : "S";
-  const vehicle = makeVehicle(`${prefix}-${String(count).padStart(3, "0")}`, chargingClass, state.timeSec, 12 + Math.round(nextRandom(state) * 35));
-  applyConfiguredCurve(vehicle, config);
+  const vehicle = makeVehicle(`${prefix}-${String(count).padStart(3, "0")}`, selectedModel, state.timeSec, 12 + Math.round(nextRandom(state) * 35));
+  vehicle.maxAcceptableWaitSec = config.maxAcceptableWaitSec ?? null;
   const wantsFullCharge = nextRandom(state) < 0.28;
   const partialTarget = chargingClass === "flash_capable" ? 72 + nextRandom(state) * 24 : 78 + nextRandom(state) * 19;
   vehicle.targetSocPercent = wantsFullCharge ? 100 : Math.max(vehicle.currentSocPercent + 5, Math.round(partialTarget));
@@ -562,7 +566,6 @@ export function assertSimulationInvariants(state: SimulationState, config: Simul
 function stepOne(input: SimulationState, config: SimulationConfig): SimulationState {
   let state = structuredClone(input);
   state.timeSec += 1;
-  state.vehicles.forEach((vehicle) => applyConfiguredCurve(vehicle, config));
   progressPhases(state, config);
   if (config.autoArrivalEnabled && state.timeSec >= state.nextAutoArrivalSec && state.vehicles.length < 500) addAutomaticVehicle(state, config);
   state = dispatchVehicles(state, config);
@@ -586,11 +589,17 @@ export function stepSimulation(input: SimulationState, config: SimulationConfig,
   return state;
 }
 
-export function addManualVehicle(state: SimulationState, config: SimulationConfig, input: { chargingClass: "flash_capable" | "standard_dc"; capacity: number; maxPower: number; initialSoc: number; targetSoc: number }): SimulationState {
+export function addManualVehicle(state: SimulationState, config: SimulationRuntimeConfig, input: { chargingClass: "flash_capable" | "standard_dc"; capacity: number; maxPower: number; initialSoc: number; targetSoc: number; vehicleModelId?: string }): SimulationState {
   const next = structuredClone(state);
-  const prefix = input.chargingClass === "flash_capable" ? "F" : "S";
-  const vehicle = makeVehicle(`${prefix}-M${String(next.vehicles.length + 1).padStart(2, "0")}`, input.chargingClass, next.timeSec, input.initialSoc);
-  applyConfiguredCurve(vehicle, config);
+  const models = resolveVehicleModels(config);
+  let selectedModel: VehicleModel;
+  if (input.vehicleModelId) {
+    const found = models.find((m) => m.id === input.vehicleModelId);
+    selectedModel = found ?? models.find((m) => m.chargingClass === input.chargingClass) ?? models[0];
+  } else {
+    selectedModel = models.find((m) => m.chargingClass === input.chargingClass) ?? models[0];
+  }
+  const vehicle = makeVehicle(`${selectedModel.chargingClass === "flash_capable" ? "F" : "S"}-M${String(next.vehicles.length + 1).padStart(2, "0")}`, selectedModel, next.timeSec, input.initialSoc);
   vehicle.usableBatteryCapacityKWh = input.capacity;
   vehicle.maxChargingPowerKw = input.maxPower;
   vehicle.targetSocPercent = input.targetSoc;
