@@ -275,3 +275,24 @@ export function resolveVehicleModelId(models: VehicleModel[], preferredId?: stri
   if (defaultFlash) return defaultFlash.id;
   return models[0]?.id ?? "";
 }
+
+export function isDefaultVehicleModel(model: VehicleModel): boolean {
+  return model.id === DEFAULT_FLASH_MODEL_ID || model.id === DEFAULT_STANDARD_MODEL_ID;
+}
+
+export function canDeleteVehicleModel(models: VehicleModel[], modelId: string): { ok: boolean; error?: string } {
+  const model = models.find((m) => m.id === modelId);
+  if (!model) return { ok: false, error: "车型不存在" };
+  if (isDefaultVehicleModel(model)) return { ok: false, error: "系统默认车型不能删除" };
+  const remaining = models.filter((m) => m.id !== modelId);
+  const hasFlash = remaining.some((m) => m.chargingClass === "flash_capable");
+  const hasStandard = remaining.some((m) => m.chargingClass === "standard_dc");
+  if (!hasFlash || !hasStandard) return { ok: false, error: "至少需要保留一个闪充车型和一个普通车型" };
+  return { ok: true };
+}
+
+export function deleteVehicleModel(models: VehicleModel[], modelId: string): { ok: true; models: VehicleModel[] } | { ok: false; error: string } {
+  const check = canDeleteVehicleModel(models, modelId);
+  if (!check.ok) return { ok: false, error: check.error! };
+  return { ok: true, models: models.filter((m) => m.id !== modelId) };
+}

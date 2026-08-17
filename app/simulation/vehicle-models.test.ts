@@ -4,6 +4,7 @@ import { baseConfig, flashCurve, standardCurve } from "./presets.js";
 import type { SimulationConfig, VehicleModel } from "./types.js";
 import {
   canChangeModelClass,
+  canDeleteVehicleModel,
   changeModelClass,
   cloneChargingCurve,
   cloneDefaultChargingCurve,
@@ -15,6 +16,8 @@ import {
   DEFAULT_STANDARD_CAPACITY_KWH,
   DEFAULT_STANDARD_MODEL_ID,
   defaultVehicleModels,
+  deleteVehicleModel,
+  isDefaultVehicleModel,
   migrateConfigV2ToV3,
   renameVehicleModel,
   resolveVehicleModelId,
@@ -436,5 +439,94 @@ describe("resolveVehicleModelId", () => {
   it("空数组返回空字符串不 crash", () => {
     assert.equal(resolveVehicleModelId([]), "");
     assert.equal(resolveVehicleModelId([], "anything"), "");
+  });
+});
+
+describe("deleteVehicleModel", () => {
+  it("default-flash 不能删除", () => {
+    const models = cloneVehicleModels(defaultVehicleModels);
+    const result = deleteVehicleModel(models, DEFAULT_FLASH_MODEL_ID);
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.ok(result.error.includes("默认"));
+  });
+
+  it("default-standard 不能删除", () => {
+    const models = cloneVehicleModels(defaultVehicleModels);
+    const result = deleteVehicleModel(models, DEFAULT_STANDARD_MODEL_ID);
+    assert.equal(result.ok, false);
+  });
+
+  it("普通 custom model 可以删除", () => {
+    const models = cloneVehicleModels(defaultVehicleModels);
+    const custom = createVehicleModel("自定义闪充", "flash_capable", 300);
+    assert.equal(custom.ok, true);
+    if (!custom.ok) return;
+    models.push(custom.model);
+    const result = deleteVehicleModel(models, custom.model.id);
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.equal(result.models.length, 2);
+    assert.ok(!result.models.some((m) => m.id === custom.model.id));
+  });
+
+  it("删除不 mutate 原 Catalog", () => {
+    const models = cloneVehicleModels(defaultVehicleModels);
+    const custom = createVehicleModel("X", "flash_capable", 100);
+    assert.equal(custom.ok, true);
+    if (!custom.ok) return;
+    models.push(custom.model);
+    const originalLength = models.length;
+    const result = deleteVehicleModel(models, custom.model.id);
+    assert.equal(result.ok, true);
+    assert.equal(models.length, originalLength);
+  });
+
+  it("default + custom 同类，删除 custom 成功", () => {
+    const models = cloneVehicleModels(defaultVehicleModels);
+    const custom = createVehicleModel("自定义标准", "standard_dc", 200);
+    assert.equal(custom.ok, true);
+    if (!custom.ok) return;
+    models.push(custom.model);
+    const result = deleteVehicleModel(models, custom.model.id);
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.ok(result.models.some((m) => m.id === DEFAULT_STANDARD_MODEL_ID));
+  });
+
+  it("类别最后车型不能删除（default 被切走后 custom 成为唯一）", () => {
+    const models = cloneVehicleModels(defaultVehicleModels);
+    const flashDefault = models.find((m) => m.id === DEFAULT_FLASH_MODEL_ID)!;
+    flashDefault.chargingClass = "standard_dc";
+    const customFlash = createVehicleModel("唯一闪充", "flash_capable", 200);
+    assert.equal(customFlash.ok, true);
+    if (!customFlash.ok) return;
+    models.push(customFlash.model);
+    const result = deleteVehicleModel(models, customFlash.model.id);
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.ok(result.error.includes("闪充"));
+  });
+
+  it("多个 custom flash 删除一个成功", () => {
+    const models = cloneVehicleModels(defaultVehicleModels);
+    const a = createVehicleModel("A", "flash_capable", 100);
+    const b = createVehicleModel("B", "flash_capable", 200);
+    assert.equal(a.ok, true);
+    assert.equal(b.ok, true);
+    if (!a.ok || !b.ok) return;
+    models.push(a.model, b.model);
+    const originalLength = models.length;
+    const result = deleteVehicleModel(models, a.model.id);
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.equal(result.models.length, originalLength - 1);
+  });
+
+  it("不存在的 modelId 安全失败", () => {
+    const models = cloneVehicleModels(defaultVehicleModels);
+    const result = deleteVehicleModel(models, "nonexistent");
+    assert.equal(result.ok, false);
+    assert.equal(models.length, 2);
   });
 });

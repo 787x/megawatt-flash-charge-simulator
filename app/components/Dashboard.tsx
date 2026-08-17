@@ -28,7 +28,7 @@ import type {
   PowerLimitReason,
 } from "../simulation/types";
 import { normalizeSimulationConfig, cloneConfigV3, getScenarioConfigV3, parseSimulationConfig } from "../simulation/config-persistence";
-import { cloneChargingCurve, DEFAULT_FLASH_MODEL_ID, DEFAULT_STANDARD_MODEL_ID, DEFAULT_FLASH_CAPACITY_KWH, DEFAULT_STANDARD_CAPACITY_KWH, cloneDefaultChargingCurve, createVehicleModel as createVehicleModelHelper, renameVehicleModel as renameVehicleModelHelper, canChangeModelClass, changeModelClass, restoreDefaultCurve as restoreDefaultCurveHelper, isModelNameValid, isModelNameUnique, CAPACITY_MIN_KWH, CAPACITY_MAX_KWH, resolveVehicleModelId } from "../simulation/vehicle-models";
+import { cloneChargingCurve, DEFAULT_FLASH_MODEL_ID, DEFAULT_STANDARD_MODEL_ID, DEFAULT_FLASH_CAPACITY_KWH, DEFAULT_STANDARD_CAPACITY_KWH, cloneDefaultChargingCurve, createVehicleModel as createVehicleModelHelper, renameVehicleModel as renameVehicleModelHelper, canChangeModelClass, changeModelClass, restoreDefaultCurve as restoreDefaultCurveHelper, isModelNameValid, isModelNameUnique, CAPACITY_MIN_KWH, CAPACITY_MAX_KWH, resolveVehicleModelId, isDefaultVehicleModel, canDeleteVehicleModel, deleteVehicleModel as deleteVehicleModelHelper } from "../simulation/vehicle-models";
 
 const speedOptions = [1, 5, 10, 30, 60, 120, 300];
 const sampleOptions = [1, 5, 10, 30, 60];
@@ -288,6 +288,7 @@ export function Dashboard() {
   const [selectedVehicleModelId, setSelectedVehicleModelId] = useState<string>(DEFAULT_FLASH_MODEL_ID);
   const [showNewModel, setShowNewModel] = useState(false);
   const [showRenameModel, setShowRenameModel] = useState(false);
+  const [showDeleteModel, setShowDeleteModel] = useState(false);
   const [newModelDraft, setNewModelDraft] = useState({ name: "", chargingClass: "flash_capable" as VehicleChargingClass, capacity: 112 });
   const [renameDraft, setRenameDraft] = useState("");
   const [renameError, setRenameError] = useState("");
@@ -499,6 +500,16 @@ export function Dashboard() {
     if (!selectedVehicleModel) return;
     updateVehicleModel(selectedVehicleModel.id, (m) => restoreDefaultCurveHelper(m));
     setToast("已恢复类别默认曲线");
+  };
+
+  const handleDeleteModel = () => {
+    if (!selectedVehicleModel) return;
+    const result = deleteVehicleModelHelper(config.vehicleModels, selectedVehicleModel.id);
+    if (!result.ok) { setToast(result.error); setShowDeleteModel(false); return; }
+    setConfig((current) => ({ ...current, vehicleModels: result.models }));
+    setSelectedVehicleModelId(resolveVehicleModelId(result.models));
+    setShowDeleteModel(false);
+    setToast(`已删除车型"${selectedVehicleModel.name}"`);
   };
 
   const handleUpdateCapacity = (value: number) => {
@@ -747,9 +758,12 @@ export function Dashboard() {
                 <label className="model-select-row">
                   <span>车型</span>
                   <select value={selectedVehicleModel.id} onChange={(event) => setSelectedVehicleModelId(event.target.value)}>{config.vehicleModels.map((m) => <option key={m.id} value={m.id}>{m.name} · {m.chargingClass === "flash_capable" ? "闪充" : "普通"}</option>)}</select>
+                </label>
+                <div className="model-actions-row">
                   <button className="model-tool-btn" onClick={() => { setNewModelDraft({ name: "", chargingClass: "flash_capable", capacity: DEFAULT_FLASH_CAPACITY_KWH }); setNewModelError(""); setShowNewModel(true); }}>新建</button>
                   <button className="model-tool-btn" onClick={() => { setRenameDraft(selectedVehicleModel.name); setRenameError(""); setShowRenameModel(true); }}>重命名</button>
-                </label>
+                  {!isDefaultVehicleModel(selectedVehicleModel) && <button className="model-tool-btn danger-btn" onClick={() => setShowDeleteModel(true)}>删除</button>}
+                </div>
                 <div className="model-props-row">
                   <label><span>类别</span><select value={selectedVehicleModel.chargingClass} onChange={(event) => handleChangeClass(event.target.value as VehicleChargingClass)}><option value="flash_capable">闪充车型</option><option value="standard_dc">普通车型</option></select></label>
                   <label><span>容量</span><input type="number" min={CAPACITY_MIN_KWH} max={CAPACITY_MAX_KWH} step={1} value={selectedVehicleModel.usableBatteryCapacityKWh} onChange={(event) => handleUpdateCapacity(Number(event.target.value))} /><small>kWh</small></label>
@@ -773,6 +787,7 @@ export function Dashboard() {
       {showReset && <div className="modal-backdrop"><section className="modal confirm-modal" role="alertdialog" aria-modal="true"><span>RESET SCENARIO</span><h2>确认重置为空站？</h2><p>所有车辆、队列、事件和运行指标将清空，仿真自动暂停；当前参数与固定随机种子保留。</p><div className="confirm-actions"><button onClick={() => setShowReset(false)}>取消</button><button className="danger-button" onClick={() => reset()}>清空车辆并暂停</button></div></section></div>}
       {showNewModel && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowNewModel(false)}><section className="modal model-modal" role="dialog" aria-modal="true" aria-labelledby="new-model-title" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" onClick={() => setShowNewModel(false)}>×</button><span>NEW VEHICLE MODEL</span><h2 id="new-model-title">新建车型</h2><div className="form-grid"><label>车型名称<input type="text" maxLength={40} value={newModelDraft.name} onChange={(event) => { setNewModelDraft((v) => ({ ...v, name: event.target.value })); setNewModelError(""); }} placeholder="例如：干线闪充 600" autoFocus /></label><label>车型类别<select value={newModelDraft.chargingClass} onChange={(event) => { const cls = event.target.value as VehicleChargingClass; setNewModelDraft((v) => ({ ...v, chargingClass: cls, capacity: cls === "flash_capable" ? DEFAULT_FLASH_CAPACITY_KWH : DEFAULT_STANDARD_CAPACITY_KWH })); }}><option value="flash_capable">闪充车型</option><option value="standard_dc">普通车型</option></select></label><label>电池容量<input type="number" min={CAPACITY_MIN_KWH} max={CAPACITY_MAX_KWH} step={1} value={newModelDraft.capacity} onChange={(event) => setNewModelDraft((v) => ({ ...v, capacity: Number(event.target.value) }))} /><small>kWh</small></label></div>{newModelError && <p className="field-error">{newModelError}</p>}<p className="assumption">创建后可继续调整充电曲线。</p><div className="confirm-actions"><button onClick={() => setShowNewModel(false)}>取消</button><button className="primary-action" onClick={handleCreateModel}>创建车型</button></div></section></div>}
       {showRenameModel && selectedVehicleModel && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowRenameModel(false)}><section className="modal model-modal" role="dialog" aria-modal="true" aria-labelledby="rename-model-title" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" onClick={() => setShowRenameModel(false)}>×</button><span>RENAME MODEL</span><h2 id="rename-model-title">重命名车型</h2><div className="form-grid"><label>车型名称<input type="text" maxLength={40} value={renameDraft} onChange={(event) => { setRenameDraft(event.target.value); setRenameError(""); }} onKeyDown={(event) => { if (event.key === "Enter") handleRenameModel(); if (event.key === "Escape") setShowRenameModel(false); }} autoFocus /></label></div>{renameError && <p className="field-error">{renameError}</p>}<div className="confirm-actions"><button onClick={() => setShowRenameModel(false)}>取消</button><button className="primary-action" onClick={handleRenameModel}>保存</button></div></section></div>}
+      {showDeleteModel && selectedVehicleModel && !isDefaultVehicleModel(selectedVehicleModel) && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowDeleteModel(false)}><section className="modal confirm-modal" role="alertdialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" onClick={() => setShowDeleteModel(false)}>×</button><span>DELETE MODEL</span><h2>删除车型</h2><p>确定删除"{selectedVehicleModel.name}"吗？</p><p className="assumption">已生成的车辆不会受到影响。删除后将无法再自动生成或手动添加该车型。</p><div className="confirm-actions"><button onClick={() => setShowDeleteModel(false)}>取消</button><button className="danger-button" onClick={handleDeleteModel}>删除车型</button></div></section></div>}
       {toast && <div className="toast" role="status">{toast}</div>}
     </div>
   );
