@@ -471,7 +471,6 @@ describe("状态、等待预测与统计", () => {
   it("超过最大可接受等待时间后车辆会弃队", () => {
     const state = blankState();
     const standard = makeVehicleFromConfig("S1", "standard_dc", 0);
-    standard.maxAcceptableWaitSec = 2;
     state.vehicles = [standard];
     state.queue = [standard.id];
     state.piles[0].connectors.find((connector) => connector.role === "universal")!.turnoverRemainingSec = 100;
@@ -827,5 +826,59 @@ describe("VehicleModel 快照生命周期", () => {
     for (const vehicle of stepped.vehicles.filter((v) => v.chargingClass === "flash_capable")) {
       assert.deepEqual(vehicle.chargingCurve, originalCurve);
     }
+  });
+
+  it("配置决定弃队时间（不手动 patch Vehicle 字段）", () => {
+    const state = blankState();
+    const vehicle = makeVehicleFromConfig("S1", "standard_dc", 0);
+    state.vehicles = [vehicle];
+    state.queue = [vehicle.id];
+    state.piles[0].connectors.find((c) => c.role === "universal")!.turnoverRemainingSec = 100;
+    const config = { ...baseConfig, autoArrivalEnabled: false, maxAcceptableWaitSec: 3 };
+    const before = stepSimulation(state, config, 2);
+    assert.equal(before.vehicles[0].status, "queued");
+    const after = stepSimulation(before, config, 2);
+    assert.equal(after.vehicles[0].status, "abandoned");
+  });
+
+  it("运行中修改 maxAcceptableWaitSec 立即影响已排队 Vehicle", () => {
+    const state = blankState();
+    const vehicle = makeVehicleFromConfig("S1", "standard_dc", 0);
+    state.vehicles = [vehicle];
+    state.queue = [vehicle.id];
+    state.piles[0].connectors.find((c) => c.role === "universal")!.turnoverRemainingSec = 200;
+    const longWaitConfig = { ...baseConfig, autoArrivalEnabled: false, maxAcceptableWaitSec: 100 };
+    const waited = stepSimulation(state, longWaitConfig, 10);
+    assert.equal(waited.vehicles[0].status, "queued");
+    const shortWaitConfig = { ...longWaitConfig, maxAcceptableWaitSec: 2 };
+    const abandoned = stepSimulation(waited, shortWaitConfig, 3);
+    assert.equal(abandoned.vehicles[0].status, "abandoned");
+  });
+
+  it("无限等待模式下车辆不会因等待时长弃队", () => {
+    const state = blankState();
+    const vehicle = makeVehicleFromConfig("S1", "standard_dc", 0);
+    state.vehicles = [vehicle];
+    state.queue = [vehicle.id];
+    state.piles[0].connectors.find((c) => c.role === "universal")!.turnoverRemainingSec = 200;
+    const config = { ...baseConfig, autoArrivalEnabled: false, maxAcceptableWaitSec: null };
+    const result = stepSimulation(state, config, 90);
+    assert.equal(result.vehicles[0].status, "queued");
+  });
+
+  it("修复等待策略后曲线仍然 snapshot（不重新引入实时覆盖）", () => {
+    const config = { ...baseConfig, autoArrivalEnabled: false, maxAcceptableWaitSec: 5 };
+    const state = createInitialState(config);
+    const flashVehicle = state.vehicles.find((v) => v.chargingClass === "flash_capable")!;
+    const originalCurve = flashVehicle.chargingCurve.map((p) => ({ ...p }));
+    const modifiedConfig = {
+      ...config,
+      maxAcceptableWaitSec: 10,
+      flashChargingCurve: flashCurve.map((p) => ({ ...p, powerKw: 10 })),
+    };
+    const result = stepSimulation(state, modifiedConfig, 5);
+    const after = result.vehicles.find((v) => v.id === flashVehicle.id)!;
+    assert.deepEqual(after.chargingCurve, originalCurve);
+    assert.equal(after.chargingCurve[0].powerKw, 400);
   });
 });

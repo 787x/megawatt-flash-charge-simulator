@@ -401,7 +401,7 @@ function progressPhases(state: SimulationState, config: SimulationConfig) {
   }
   for (const id of [...state.queue]) {
     const vehicle = state.vehicles.find((item) => item.id === id);
-    if (vehicle?.queuedAtSec !== undefined && vehicle.maxAcceptableWaitSec !== null && state.timeSec - vehicle.queuedAtSec > vehicle.maxAcceptableWaitSec) {
+    if (vehicle?.queuedAtSec !== undefined && config.maxAcceptableWaitSec !== null && state.timeSec - vehicle.queuedAtSec > config.maxAcceptableWaitSec) {
       transition(vehicle, "abandoned", state.timeSec, "超过最大可接受等待时间，弃队");
       state.queue = state.queue.filter((item) => item !== id);
       addEvent(state, "vehicle_abandoned", `${vehicle.id} 等待超时后弃队`, "warning");
@@ -716,7 +716,7 @@ export function estimateVehicleWaitTime(vehicleId: string, state: SimulationStat
   }
 
   return {
-    expectedWaitSec: vehicle.maxAcceptableWaitSec ?? 24 * 3600,
+    expectedWaitSec: config.maxAcceptableWaitSec ?? 24 * 3600,
     likelyConnectorId: compatible[0]?.id,
     confidence: "low",
     explanation: ["当前队列与枪口兼容条件下暂时无法确定服务时点。"],
