@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { HistorySample } from "../simulation/types";
 
 const powerSeries = [
@@ -87,8 +87,23 @@ function drawTimeAxis(context: CanvasRenderingContext2D, samples: HistorySample[
 export function TrendCanvas({ history, storageCapacityKWh, storageMinSocPercent, currentStorageEnergyKWh, currentStorageSocPercent, sampleIntervalSec }: { history: HistorySample[]; storageCapacityKWh: number; storageMinSocPercent: number; currentStorageEnergyKWh: number; currentStorageSocPercent: number; sampleIntervalSec: number }) {
   const powerRef = useRef<HTMLCanvasElement>(null);
   const energyRef = useRef<HTMLCanvasElement>(null);
+  const [resizeVersion, setResizeVersion] = useState(0);
   const samples = history.slice(-Math.max(2, Math.ceil(1800 / Math.max(1, sampleIntervalSec))));
   const latest = samples.at(-1);
+
+  useEffect(() => {
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => setResizeVersion((version) => version + 1));
+    });
+    if (powerRef.current) observer.observe(powerRef.current);
+    if (energyRef.current) observer.observe(energyRef.current);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, []);
 
   useEffect(() => {
     const canvas = powerRef.current;
@@ -154,7 +169,7 @@ export function TrendCanvas({ history, storageCapacityKWh, storageMinSocPercent,
     }
     context.setLineDash([]);
     context.lineCap = "butt";
-  }, [samples]);
+  }, [samples, resizeVersion]);
 
   useEffect(() => {
     const canvas = energyRef.current;
@@ -221,7 +236,7 @@ export function TrendCanvas({ history, storageCapacityKWh, storageMinSocPercent,
       context.arc(xFor(sample.timeSec), yFor(sample.storageEnergyKWh ?? sample.storageSocPercent * storageCapacityKWh / 100), 2.5, 0, Math.PI * 2);
       context.fill();
     }
-  }, [samples, storageCapacityKWh, storageMinSocPercent]);
+  }, [samples, storageCapacityKWh, storageMinSocPercent, resizeVersion]);
 
   return (
     <div className="trend-dashboard">
