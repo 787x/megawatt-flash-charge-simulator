@@ -1,6 +1,6 @@
 "use strict";
 
-const { app, BrowserWindow, dialog } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain } = require("electron");
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
@@ -9,6 +9,9 @@ const url = require("url");
 const PORT = 17823;
 const HOST = "127.0.0.1";
 const ORIGIN = `http://${HOST}:${PORT}`;
+
+const ALLOWED_ZOOM_LEVELS = [80, 90, 100, 110, 125, 130, 150];
+const DEFAULT_ZOOM = 100;
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -110,12 +113,41 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      preload: path.join(__dirname, "preload.cjs"),
     },
   });
 
   win.loadURL(ORIGIN);
   return win;
 }
+
+// IPC: Zoom controls
+ipcMain.handle("flash-sim:get-zoom", (event) => {
+  const wc = event.sender;
+  const factor = wc.getZoomFactor();
+  return Math.round(factor * 100);
+});
+
+ipcMain.handle("flash-sim:set-zoom", (event, percent) => {
+  // Validate sender origin via URL parsing
+  const wc = event.sender;
+  const senderUrl = wc.getURL();
+  let parsed;
+  try {
+    parsed = new URL(senderUrl);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "http:" || parsed.hostname !== "127.0.0.1" || parsed.port !== String(PORT)) {
+    return false;
+  }
+  // Validate percent
+  if (typeof percent !== "number" || !ALLOWED_ZOOM_LEVELS.includes(percent)) {
+    return false;
+  }
+  wc.setZoomFactor(percent / 100);
+  return true;
+});
 
 // Single instance lock
 const gotLock = app.requestSingleInstanceLock();

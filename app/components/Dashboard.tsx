@@ -46,6 +46,19 @@ type MobileView = "station" | "control" | "analysis";
 type MobileAnalysisView = "trend" | "vehicles" | "events" | "results" | "model" | "reference";
 type MobileUiMode = "task" | "legacy";
 
+declare global {
+  interface Window {
+    flashSimulatorDesktop?: {
+      isElectron: true;
+      getZoomPercent(): Promise<number>;
+      setZoomPercent(percent: number): Promise<boolean>;
+    };
+  }
+}
+
+const ZOOM_LEVELS = [80, 90, 100, 110, 125, 130, 150] as const;
+const isElectronDesktop = typeof window !== "undefined" && !!window.flashSimulatorDesktop;
+
 const statusNames: Record<Vehicle["status"], string> = {
   scheduled: "即将到达",
   arriving: "驶入中",
@@ -321,6 +334,17 @@ export function Dashboard() {
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  const [helpDismissed, setHelpDismissed] = useState(() => {
+    if (typeof window !== "undefined") return localStorage.getItem("flash-sim-help-dismissed-v1") === "1";
+    return false;
+  });
+  const [zoomPercent, setZoomPercent] = useState(() => {
+    if (typeof window !== "undefined") {
+      const saved = Number(localStorage.getItem("flash-sim-app-zoom"));
+      if (ZOOM_LEVELS.includes(saved as typeof ZOOM_LEVELS[number])) return saved;
+    }
+    return 100;
+  });
   const [showReset, setShowReset] = useState(false);
   const [toast, setToast] = useState("");
   const [selectedVehicleModelId, setSelectedVehicleModelId] = useState<string>(DEFAULT_FLASH_MODEL_ID);
@@ -380,8 +404,62 @@ export function Dashboard() {
   }, [mobileUiMode]);
 
   useEffect(() => {
+    localStorage.setItem("flash-sim-app-zoom", String(zoomPercent));
+  }, [zoomPercent]);
+
+  const persistHelpDismissed = (dismissed: boolean) => {
+    setHelpDismissed(dismissed);
+    if (dismissed) {
+      localStorage.setItem("flash-sim-help-dismissed-v1", "1");
+    } else {
+      localStorage.removeItem("flash-sim-help-dismissed-v1");
+    }
+  };
+
+  useEffect(() => {
     document.documentElement.dataset.mobileMode = mobileUiMode;
   }, [mobileUiMode]);
+
+  // Auto-show help on first launch (Electron and Web)
+  useEffect(() => {
+    if (!helpDismissed) {
+      const timer = window.setTimeout(() => setShowHelp(true), 600);
+      return () => window.clearTimeout(timer);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Electron zoom: apply on mount and on change
+  useEffect(() => {
+    if (window.flashSimulatorDesktop?.isElectron) {
+      window.flashSimulatorDesktop.setZoomPercent(zoomPercent);
+    }
+  }, [zoomPercent]);
+
+  // Electron zoom: keyboard shortcuts
+  useEffect(() => {
+    if (!window.flashSimulatorDesktop?.isElectron) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      if (e.key === "=" || e.key === "+") {
+        e.preventDefault();
+        setZoomPercent((prev) => {
+          const idx = ZOOM_LEVELS.indexOf(prev as typeof ZOOM_LEVELS[number]);
+          return idx < ZOOM_LEVELS.length - 1 ? ZOOM_LEVELS[idx + 1] : prev;
+        });
+      } else if (e.key === "-") {
+        e.preventDefault();
+        setZoomPercent((prev) => {
+          const idx = ZOOM_LEVELS.indexOf(prev as typeof ZOOM_LEVELS[number]);
+          return idx > 0 ? ZOOM_LEVELS[idx - 1] : prev;
+        });
+      } else if (e.key === "0") {
+        e.preventDefault();
+        setZoomPercent(100);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   useEffect(() => {
     localStorage.setItem("flash-sim-config", JSON.stringify(config));
@@ -729,6 +807,11 @@ export function Dashboard() {
           <button className="danger-action" onClick={() => setShowReset(true)}>重置</button>
         </div>
         <div className="utility-actions" role="group" aria-label="显示与帮助">
+          {isElectronDesktop && (
+            <label className="zoom-control" aria-label="显示缩放">
+              <select value={zoomPercent} onChange={(event) => setZoomPercent(Number(event.target.value))}>{ZOOM_LEVELS.map((level) => <option value={level} key={level}>{level}%</option>)}</select>
+            </label>
+          )}
           <button className="quiet-action" onClick={() => setTheme((value) => value === "dark" ? "light" : "dark")} aria-label="切换深浅主题">{theme === "dark" ? "浅色" : "深色"}</button>
           <button className="quiet-action" onClick={() => setShowHelp(true)}>帮助</button>
           <button className="quiet-action legacy-mode-toggle-btn" onClick={() => setMobileUiMode("task")}>新版界面</button>
@@ -984,7 +1067,32 @@ export function Dashboard() {
 
       {showAdd && (() => { const manualModel = config.vehicleModels.find((m) => m.id === manualVehicleModelId) ?? config.vehicleModels[0]; const handleModelSwitch = (modelId: string) => { setManualVehicleModelId(modelId); const m = config.vehicleModels.find((x) => x.id === modelId); if (m) setManual((v) => ({ ...v, capacity: m.usableBatteryCapacityKWh, maxPower: m.chargingClass === "flash_capable" ? 1500 : 520 })); }; return <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowAdd(false)}><section className="modal" data-dialog-id="add-vehicle" role="dialog" aria-modal="true" aria-labelledby="add-title" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" aria-label="关闭手动添加车辆" onClick={() => setShowAdd(false)}>×</button><span>MANUAL ARRIVAL</span><h2 id="add-title">手动添加车辆</h2><label className="manual-model-select"><span>车型</span><select data-initial-focus title={manualModel?.name} value={manualVehicleModelId} onChange={(event) => handleModelSwitch(event.target.value)}>{config.vehicleModels.map((m) => <option key={m.id} value={m.id}>{m.name} · {m.chargingClass === "flash_capable" ? "闪充" : "普通"}</option>)}</select></label><div className="form-grid"><label>添加数量（辆）<input type="number" inputMode="numeric" min="1" max="30" value={manual.quantity} onChange={(event) => setManual((value) => ({ ...value, quantity: Math.max(1, Math.min(30, Number(event.target.value) || 1)) }))} /></label><label>本次电池容量<input type="number" inputMode="decimal" value={manual.capacity} onChange={(event) => setManual((value) => ({ ...value, capacity: Number(event.target.value) }))} /><small>默认取自车型，仅影响本次</small></label><label>本次峰值功率<input type="number" inputMode="decimal" value={manual.maxPower} onChange={(event) => setManual((value) => ({ ...value, maxPower: Number(event.target.value) }))} /><small>kW · 仅影响本次</small></label><label>初始 SOC %<input type="number" inputMode="decimal" min="0" max="95" value={manual.initialSoc} onChange={(event) => setManual((value) => ({ ...value, initialSoc: Number(event.target.value) }))} /></label><label>目标 SOC %<input type="number" inputMode="decimal" min="1" max="100" value={manual.targetSoc} onChange={(event) => setManual((value) => ({ ...value, targetSoc: Number(event.target.value) }))} /></label></div><p className="assumption">批量车辆按相同参数到达；本次容量和峰值功率仅覆盖本次添加，不修改车型配置。</p><button className="primary-action modal-submit" onClick={addVehicle}>添加 {Math.max(1, Math.min(30, Math.round(manual.quantity)))} 辆{manualModel?.name ?? ""}并参与调度</button></section></div>; })()}
       {selectedLiveVehicle && <aside className="vehicle-drawer" data-dialog-id="vehicle-drawer" role="dialog" aria-modal="true" aria-label={`${selectedLiveVehicle.id} 车辆详情`}><button className="modal-close" data-initial-focus aria-label="关闭车辆详情" onClick={() => setSelectedVehicle(null)}>×</button><span>VEHICLE SESSION</span><h2>{selectedLiveVehicle.id}</h2><p className="drawer-subtitle">{selectedLiveVehicle.name} · {selectedLiveVehicle.chargingClass === "flash_capable" ? "闪充车型" : "普通车型"}</p><div className="drawer-soc"><div><span>当前 SOC</span><strong>{selectedLiveVehicle.currentSocPercent.toFixed(1)}%</strong></div><i><em style={{ width: `${selectedLiveVehicle.currentSocPercent}%` }} /></i><small>初始 {selectedLiveVehicle.initialSocPercent}% · 目标 {selectedLiveVehicle.targetSocPercent}%</small></div><dl><div><dt>车型</dt><dd>{selectedLiveVehicle.name}</dd></div><div><dt>类别</dt><dd>{selectedLiveVehicle.chargingClass === "flash_capable" ? "闪充车型" : "普通车型"}</dd></div><div><dt>电池容量</dt><dd>{selectedLiveVehicle.usableBatteryCapacityKWh} kWh</dd></div><div><dt>当前状态</dt><dd>{statusNames[selectedLiveVehicle.status]}</dd></div><div><dt>当前 / 请求功率</dt><dd>{Math.round(selectedLiveVehicle.actualPowerKw)} / {Math.round(selectedLiveVehicle.requestedPowerKw)} kW</dd></div><div><dt>可用枪口</dt><dd>{selectedLiveVehicle.chargingClass === "flash_capable" ? "A 通用、B 专用" : "仅 A 通用"}</dd></div><div><dt>当前分配</dt><dd>{selectedLiveVehicle.assignedConnectorId ?? "尚未分配"}</dd></div><div><dt>已充入电量</dt><dd>{selectedLiveVehicle.deliveredEnergyKWh.toFixed(2)} kWh</dd></div><div><dt>等待用时</dt><dd>{formatDuration(vehicleWaitDuration(selectedLiveVehicle, state.timeSec))}</dd></div><div><dt>充电用时</dt><dd>{selectedLiveVehicle.chargingStartedAtSec === undefined ? "—" : formatDuration(vehicleChargeDuration(selectedLiveVehicle, state.timeSec))}</dd></div><div><dt>预计剩余等待</dt><dd>{selectedLiveVehicle.status === "queued" && selectedEstimate ? formatDuration(selectedEstimate.expectedWaitSec) : "—"}</dd></div><div><dt>预计剩余充电</dt><dd>{selectedRemainingCharge > 0 ? formatDuration(selectedRemainingCharge) : "—"}</dd></div><div><dt>电池温度 / 健康度</dt><dd>{selectedLiveVehicle.batteryTemperatureC}°C / {selectedLiveVehicle.batteryHealthPercent}%</dd></div><div><dt>限功率原因</dt><dd>{selectedLiveVehicle.limitReasons.join("、")}</dd></div></dl>{selectedLiveVehicle.status === "queued" && selectedEstimate && <div className="estimate-box">{selectedEstimate.explanation.map((line) => <p key={line}>{line}</p>)}</div>}<h3>车辆时间线</h3><ol className="timeline">{selectedLiveVehicle.timeline.slice().reverse().map((item, index) => <li key={`${item.timeSec}-${index}`}><time>T+{formatTime(item.timeSec)}</time><strong>{statusNames[item.status]}</strong><span>{item.note}</span></li>)}</ol></aside>}
-      {showHelp && <div className="modal-backdrop" onMouseDown={() => setShowHelp(false)}><section className="modal help-modal" data-dialog-id="help" role="dialog" aria-modal="true" aria-labelledby="help-title" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" data-initial-focus aria-label="关闭帮助" onClick={() => setShowHelp(false)}>×</button><span>QUICK GUIDE</span><h2 id="help-title">如何读懂这个站</h2><ol><li><strong>先看首屏曲线：</strong>左侧比较电网、储能与车辆功率，右侧查看储能电量和安全下限。</li><li><strong>模拟电网异常：</strong>在"电网与母线"中可断电、临时限功率或恢复供电；断电时由储能尽力支撑。</li><li><strong>手动调储能：</strong>拖动当前电量滑杆，或使用 20%、50%、80%、100% 快捷按钮。</li><li><strong>调整采样：</strong>点击右上角"采样 5s"按钮，在 1、5、10、30、60 秒间循环。</li><li><strong>读车旁倒计时：</strong>充电区显示预计剩余充电，等候区显示预计剩余等待。</li><li><strong>查看诊断：</strong>页面会解释电网异常、等待变长和功率降低的具体原因。</li></ol><p className="assumption">本工具用于技术演示与方案研究，不代表任何厂商官方控制策略。</p></section></div>}
+      {showHelp && <div className="modal-backdrop" onMouseDown={() => setShowHelp(false)}><section className="modal help-modal" data-dialog-id="help" role="dialog" aria-modal="true" aria-labelledby="help-title" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" data-initial-focus aria-label="关闭帮助" onClick={() => setShowHelp(false)}>×</button>
+        <h2 id="help-title">兆瓦闪充站仿真 · 使用说明</h2>
+        <p className="help-subtitle">这是一个用来模拟兆瓦级闪充站运行过程的工具。你可以调整车辆、电网和储能参数，观察充电、排队、电网负荷和储能变化，再通过趋势和运营结果比较不同方案。</p>
+        <div className="help-zoom-callout">
+          <strong>文字偏小？</strong>
+          {isElectronDesktop ? <><p>Windows 桌面版可以在右上角直接调整显示比例。建议先试 <b>110%</b> 或 <b>130%</b>。</p><p><span className="help-kbd">Ctrl</span> + <span className="help-kbd">+</span> 放大　<span className="help-kbd">Ctrl</span> + <span className="help-kbd">−</span> 缩小　<span className="help-kbd">Ctrl</span> + <span className="help-kbd">0</span> 恢复 100%</p><p>设置会自动保存，下次打开仍然保持。</p></> : <p>如果觉得文字偏小，可以直接使用浏览器自带的页面缩放功能。</p>}
+        </div>
+        <div className="help-sections">
+          <section><h3>快速开始</h3><p>第一次使用不用把所有参数都研究明白，可以先按这个顺序试：</p><ol><li>打开 <strong>Control（控制）</strong>，设置你想模拟的场景和车辆到达情况。</li><li>可以等待系统自动生成车辆，也可以用<strong>手动添加车辆</strong>自己加几辆车。</li><li>点击<strong>继续</strong>，让仿真开始运行。</li><li>在 <strong>Station（站场）</strong>看当前有哪些车在充电、有没有排队、电网用了多少功率、储能还剩多少电。</li><li>想看一段时间内的变化，就到 <strong>Analysis（分析）</strong>查看趋势、车辆、事件和运营结果。</li><li>如果想保存当前配置或拿数据进一步分析，可以导出 JSON 或 CSV。</li></ol></section>
+          <section><h3>仿真怎么控制</h3><p><strong>暂停 / 继续</strong>就是开始和暂停仿真。</p><p>桌面版还提供<strong>单步</strong>，适合暂停后逐步观察系统变化。</p><p><strong>速度</strong>用来调整仿真跑得多快。它只改变你等待结果的速度，不改变场景本身的规则。</p><p><strong>重置</strong>会重新开始这次仿真，清空当前车辆、排队、事件和运行统计。你已经设置好的场景参数和车型目录会保留，不需要重新配一遍。</p></section>
+          <section><h3>Station、Control、Analysis 分别看什么</h3><p><strong>Station（站场）</strong>可以理解成"现在正在发生什么"。这里主要看充电桩、排队、电网输入、储能 SOC、供能关系以及实时运营数据。</p><p><strong>Control（控制）</strong>是"我要怎么设置这个场景"。车辆到达、电网扰动、储能、场景参数以及配置导入导出等操作主要都在这里。</p><p><strong>Analysis（分析）</strong>是"刚才运行得怎么样"。这里可以查看功率和储能趋势、车辆明细、事件记录、运营结果，以及车型和充电曲线。</p><p>在窄屏或移动设备上，界面会自动整理成 Station / Control / Analysis 三个任务视图，功能和桌面版使用的是同一套仿真状态。</p></section>
+          <section><h3>车型和充电曲线</h3><p>每个车型主要有三组信息：</p><ul><li>它属于兆瓦闪充还是普通直流快充</li><li>电池可用容量有多大</li><li>不同 SOC 下允许多大的充电功率</li></ul><p>系统默认提供<strong>兆瓦闪充车辆</strong>和<strong>普通直流快充车辆</strong>。你也可以建立自己的车型，修改名称、电池容量和充电曲线。</p><p>默认车型不能删除；每一种充电类别至少要保留一个车型，这样自动生成车辆时始终有车型可以使用。</p><p><strong>车辆一旦进入仿真，就会记住自己当时使用的车型参数。</strong>所以，一辆车已经进入站场以后，你再去修改或者删除车型目录里的那个车型，这辆已经存在的车不会突然跟着变化。</p><p>可以把它理解成：车型目录决定"以后来的车"，已经来的车按进入时的参数继续运行。</p></section>
+          <section><h3>自动生成和手动加车有什么区别</h3><p>开启<strong>自动生成车辆</strong>后，系统会按照你设置的闪充车辆比例，先决定新来的车属于闪充还是普通快充，再从这个类别下现有的车型里选择具体车型。</p><p><strong>手动添加车辆</strong>时，你可以直接指定具体车型，还可以单独调整这一次加入车辆的电池容量、峰值功率、初始 SOC、目标 SOC 和数量。</p><p>这些临时调整只影响这一次添加的车辆，不会把车型目录本身改掉。</p></section>
+          <section><h3>电网限功率和断电</h3><p>在 Control 中可以人为制造两种电网扰动：</p><p><strong>临时限功率：</strong>电网还能供电，但当前允许使用的功率降低。</p><p><strong>断电：</strong>这段时间电网无法向站内供能。</p><p>只要当前统计周期里发生过这类扰动，Analysis 的运营结果就会同时显示：</p><p><strong>额定电网利用率：</strong>如果按照原本的额定供电能力来看，电网用了多少。</p><p><strong>可用电网利用率：</strong>考虑限功率或断电之后，实际可用供电能力被利用了多少。</p><p>平时没有发生电网扰动时，不需要同时看两个数。</p></section>
+          <section><h3>储能怎么看</h3><p>SOC 可以简单理解成储能现在还剩多少电。</p><p>储能放电时，它会帮助电网一起给充电桩供电；储能充电时，它会从站内母线吸收功率给自己补电。</p><p>趋势图中的储能功率采用<strong>正值 = 放电、负值 = 充电</strong>，也就是界面里的 <strong>+放 / −充</strong>。</p><p>在 Control 中还可以直接调整储能电量，或者用 20%、50%、80%、100% 的快捷按钮快速设置 SOC。</p></section>
+          <section><h3>参数会不会丢</h3><p>当前配置会自动保存在本机，所以正常刷新页面或者重新打开应用以后，大部分配置都可以恢复。</p><p><strong>重置</strong>不会删除你的车型目录和场景参数。它只是把正在运行的这一轮仿真重新开始。</p><p>如果你切换到另一个<strong>预设场景</strong>，则会载入那个预设自己的基础配置和默认车型目录。</p></section>
+          <section><h3>JSON 和 CSV 是干什么的</h3><p><strong>JSON 导出 / 导入</strong>主要用来备份和恢复场景配置，其中也包括车型目录。比如你已经调好一套车辆、电网、储能和车型参数，可以先导出一个 JSON，以后需要时再导回来。</p><p><strong>CSV 导出</strong>主要用于把当前仿真中的车辆运营明细拿出去做进一步分析，例如在 Excel 或其他数据工具中查看。</p></section>
+          <section><h3>移动界面</h3><p>当窗口宽度不超过 1023px 时，应用会自动进入移动布局。</p><p>目前可以选择两种移动界面：</p><p><strong>任务式界面：</strong>更适合手机操作，通过 Station / Control / Analysis 三个任务页切换。</p><p><strong>经典界面：</strong>保留原来的纵向长页面结构，可以从上到下连续滚动查看。</p><p>两种界面只是"看起来和操作方式不同"，背后使用的是同一场仿真。所以在任务式界面和经典界面之间切换，不会重新开始仿真，也不会丢掉车辆、排队或统计结果。</p></section>
+          <section><h3>显示缩放</h3>{isElectronDesktop ? <><p>如果你觉得默认文字偏小，推荐直接把显示比例调到 <strong>110%</strong> 或 <strong>130%</strong>。</p><p>Windows 桌面版顶部会显示当前缩放比例，可选择 80%、90%、100%、110%、125%、130%、150%。</p><p>快捷键：</p><p><span className="help-kbd">Ctrl</span> + <span className="help-kbd">+</span> 放大　<span className="help-kbd">Ctrl</span> + <span className="help-kbd">−</span> 缩小　<span className="help-kbd">Ctrl</span> + <span className="help-kbd">0</span> 恢复 100%</p><p>你设置的比例会自动保存，关闭程序后再打开也会继续使用。</p></> : <p>如果是在普通浏览器中使用网页版，可以直接使用浏览器自己的页面缩放功能。</p>}</section>
+          <section><h3>最后说明</h3><p>这个工具主要用于观察不同车辆流量、车型、电网条件和储能配置下，闪充站可能出现的运行状态。</p><p>很多结果不是某一个参数单独决定的，而是车辆什么时候来、充多快、电网能提供多少功率、储能什么时候充放电等因素共同作用的结果。</p><p>所以比较不同方案时，建议先固定一部分条件，再逐项调整参数观察变化，这样通常更容易看出某个设置到底带来了什么影响。</p></section>
+        </div>
+        <div className="help-footer">
+          <label className="help-dismiss-check"><input type="checkbox" checked={helpDismissed} onChange={(event) => persistHelpDismissed(event.target.checked)} /><span>启动时不再显示此说明</span></label>
+          <button className="primary-action" onClick={() => setShowHelp(false)}>关闭</button>
+        </div>
+      </section></div>}
       {showReset && <div className="modal-backdrop"><section className="modal confirm-modal" data-dialog-id="reset" role="alertdialog" aria-modal="true" aria-labelledby="reset-title"><span>RESET SCENARIO</span><h2 id="reset-title">确认重置为空站？</h2><p>所有车辆、队列、事件和运行指标将清空，仿真自动暂停；当前参数与固定随机种子保留。</p><div className="confirm-actions"><button data-initial-focus onClick={() => setShowReset(false)}>取消</button><button className="danger-button" onClick={() => reset()}>清空车辆并暂停</button></div></section></div>}
       {showNewModel && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowNewModel(false)}><section className="modal model-modal" data-dialog-id="new-model" role="dialog" aria-modal="true" aria-labelledby="new-model-title" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" aria-label="关闭新建车型" onClick={() => setShowNewModel(false)}>×</button><span>NEW VEHICLE MODEL</span><h2 id="new-model-title">新建车型</h2><div className="form-grid"><label>车型名称<input type="text" data-initial-focus maxLength={40} value={newModelDraft.name} onChange={(event) => { setNewModelDraft((v) => ({ ...v, name: event.target.value })); setNewModelError(""); }} onKeyDown={(event) => { if (event.key === "Enter") handleCreateModel(); }} placeholder="例如：干线闪充 600" /></label><label>车型类别<select value={newModelDraft.chargingClass} onChange={(event) => { const cls = event.target.value as VehicleChargingClass; setNewModelDraft((v) => ({ ...v, chargingClass: cls, capacity: cls === "flash_capable" ? DEFAULT_FLASH_CAPACITY_KWH : DEFAULT_STANDARD_CAPACITY_KWH })); }}><option value="flash_capable">闪充车型</option><option value="standard_dc">普通车型</option></select></label><label>电池容量<input type="number" inputMode="decimal" min={CAPACITY_MIN_KWH} max={CAPACITY_MAX_KWH} step={1} value={newModelDraft.capacity} onChange={(event) => setNewModelDraft((v) => ({ ...v, capacity: Number(event.target.value) }))} /><small>kWh</small></label></div>{newModelError && <p className="field-error">{newModelError}</p>}<p className="assumption">创建后可继续调整充电曲线。</p><div className="confirm-actions"><button onClick={() => setShowNewModel(false)}>取消</button><button className="primary-action" onClick={handleCreateModel}>创建车型</button></div></section></div>}
       {showRenameModel && selectedVehicleModel && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowRenameModel(false)}><section className="modal model-modal" data-dialog-id="rename-model" role="dialog" aria-modal="true" aria-labelledby="rename-model-title" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" aria-label="关闭重命名车型" onClick={() => setShowRenameModel(false)}>×</button><span>RENAME MODEL</span><h2 id="rename-model-title">重命名车型</h2><div className="form-grid"><label>车型名称<input type="text" data-initial-focus maxLength={40} value={renameDraft} onChange={(event) => { setRenameDraft(event.target.value); setRenameError(""); }} onKeyDown={(event) => { if (event.key === "Enter") handleRenameModel(); }} /></label></div>{renameError && <p className="field-error">{renameError}</p>}<div className="confirm-actions"><button onClick={() => setShowRenameModel(false)}>取消</button><button className="primary-action" onClick={handleRenameModel}>保存</button></div></section></div>}
