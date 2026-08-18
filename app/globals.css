@@ -88,8 +88,10 @@ button:focus-visible, select:focus-visible, input:focus-visible, summary:focus-v
 .scenario-select select { max-width: 155px; }
 .speed-control select { width: 62px; }
 .model-disclaimer { padding: 5px 18px; color: var(--faint); border-bottom: 1px solid var(--line); text-align: center; background: var(--bg); font-size: 11px; }
+.mobile-status-header, .mobile-view-switch, .mobile-transport { display: none; }
 
 .dashboard-grid { min-width: 0; min-height: 0; display: grid; grid-template-columns: clamp(260px, 19vw, 290px) minmax(0, 1fr) clamp(280px, 21vw, 310px); grid-template-rows: auto clamp(460px, 56vh, 560px) minmax(285px, auto); grid-template-areas: "trend trend trend" "config station metrics" "data data data"; gap: 10px; padding: 10px; overflow-x: hidden; overflow-y: auto; }
+.task-view { display: contents; }
 .dashboard-grid.queue-collapsed { grid-template-rows: auto var(--station-row-height, clamp(460px, 56vh, 560px)) minmax(285px, auto); }
 .dashboard-grid.queue-expanded { grid-template-rows: auto var(--station-row-height, clamp(460px, 56vh, 560px)) minmax(285px, auto); }
 .dashboard-grid.queue-collapsed .station-panel { overflow: hidden; }
@@ -538,22 +540,38 @@ tbody tr:hover { background: var(--cyan-soft); }
   .dashboard-grid { grid-template-columns: clamp(238px, 19vw, 260px) minmax(0, 1fr) clamp(250px, 21vw, 280px); }
 }
 
-@media (max-height: 850px) and (min-width: 901px) {
+@media (max-height: 850px) and (min-width: 1024px) {
   .app-shell { grid-template-rows: auto auto minmax(0, 1fr); }
   .app-footer { display: none; }
 }
 
-@media (max-width: 900px) {
-  body { overflow: auto; }
-  .app-shell { height: auto; min-height: 100vh; display: block; overflow: visible; }
-  .topbar { position: static; display: flex; flex-direction: column; align-items: stretch; }
-  .product-context, .simulation-status, .transport-controls, .scenario-actions, .utility-actions { flex-wrap: wrap; }
-  .dashboard-grid { display: flex; flex-direction: column; padding: 7px; overflow: visible; }
-  .trend-overview { order: 0; width: 100%; }
-  .station-panel { order: 1; width: 100%; }
-  .metrics-panel { order: 2; width: 100%; display: block; }
-  .config-panel { order: 3; width: 100%; }
-  .data-panel { order: 4; width: 100%; }
+@media (max-width: 1023px) {
+  html, body { width: 100%; height: 100%; overflow: hidden; }
+  body { min-width: 0; }
+  .app-shell { width: 100%; height: 100dvh; min-height: 0; display: grid; grid-template-rows: 48px 44px minmax(0, 1fr) auto; overflow: hidden; }
+  .topbar, .model-disclaimer, .app-footer { display: none; }
+
+  .mobile-status-header { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 12px; border-bottom: 1px solid var(--line-strong); background: var(--bg-soft); }
+  .mobile-product { min-width: 0; display: grid; gap: 1px; }
+  .mobile-product strong { overflow: hidden; color: var(--text); font-size: 15px; font-weight: 650; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
+  .mobile-product span { overflow: hidden; color: var(--faint); font-size: 10px; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
+  .mobile-simulation-status { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; }
+  .mobile-simulation-status strong { color: var(--text); font: 600 14px/1 Consolas, "SFMono-Regular", monospace; font-variant-numeric: tabular-nums; }
+
+  .mobile-view-switch { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-bottom: 1px solid var(--line-strong); background: var(--bg-soft); }
+  .mobile-view-switch button { position: relative; min-width: 0; min-height: 44px; padding: 8px 12px; border: 0; border-right: 1px solid var(--line); border-radius: 0; background: transparent; color: var(--muted); font-size: 13px; font-weight: 600; }
+  .mobile-view-switch button:last-child { border-right: 0; }
+  .mobile-view-switch button::after { content: ""; position: absolute; right: 12px; bottom: 0; left: 12px; height: 2px; background: transparent; }
+  .mobile-view-switch button.active { color: var(--text); background: var(--panel); }
+  .mobile-view-switch button.active::after { background: var(--cyan); }
+  .mobile-view-switch button:focus-visible { z-index: 1; }
+
+  .dashboard-grid, .dashboard-grid.queue-collapsed, .dashboard-grid.queue-expanded { position: relative; display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); min-width: 0; min-height: 0; gap: 0; padding: 0; overflow: hidden; }
+  .task-view { grid-area: 1 / 1; min-width: 0; min-height: 0; height: 100%; display: flex; flex-direction: column; gap: 7px; padding: 7px 7px calc(12px + env(safe-area-inset-bottom)); overflow: hidden; visibility: hidden; pointer-events: none; overscroll-behavior: contain; scrollbar-gutter: stable; }
+  .task-view.active { overflow-x: hidden; overflow-y: auto; visibility: visible; pointer-events: auto; -webkit-overflow-scrolling: touch; }
+  .task-view > .panel { flex: 0 0 auto; width: 100%; min-width: 0; }
+  .task-view .config-panel, .task-view .station-panel, .task-view .metrics-panel { overflow: visible; }
+  .metrics-panel { display: block; }
   .trend-overview-head { align-items: stretch; flex-direction: column; }
   .trend-overview-actions { align-items: stretch; flex-direction: column; }
   .trend-dashboard { grid-template-columns: 1fr; }
@@ -562,6 +580,15 @@ tbody tr:hover { background: var(--cyan-soft); }
   .analytics-grid { grid-template-columns: repeat(2, 1fr); }
   .curve-editor, .sources, .chart-content { grid-template-columns: 1fr; }
   .trend-wrap { border-left: 0; padding-left: 0; }
+
+  .mobile-transport { min-width: 0; min-height: calc(56px + env(safe-area-inset-bottom)); display: grid; grid-template-columns: minmax(84px, 1.15fr) minmax(72px, .9fr) minmax(112px, 1fr); gap: 6px; align-items: center; padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line-strong); background: var(--bg-soft); }
+  .mobile-transport button, .mobile-transport label { min-width: 0; min-height: 44px; }
+  .mobile-transport button { padding: 8px 10px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font-size: 13px; }
+  .mobile-transport .primary-action { border-color: var(--cyan); background: var(--cyan); color: #0b211e; }
+  .mobile-transport button:disabled { cursor: not-allowed; opacity: .4; }
+  .mobile-transport label { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; border: 1px solid var(--line); background: var(--panel); }
+  .mobile-transport label span { padding-left: 9px; color: var(--muted); font-size: 11px; }
+  .mobile-transport select { width: 100%; height: 42px; min-width: 0; padding: 7px 6px; border: 0; background: transparent; color: var(--text); font-size: 12px; }
 }
 
 @media (max-width: 560px) {

@@ -42,6 +42,7 @@ const tabs = [
   { name: "参考 · 参数来源", kind: "reference" },
 ] as const;
 type Tab = typeof tabs[number]["name"];
+type MobileView = "station" | "control" | "analysis";
 
 const statusNames: Record<Vehicle["status"], string> = {
   scheduled: "即将到达",
@@ -279,6 +280,7 @@ export function Dashboard() {
   const [running, setRunning] = useState(true);
   const [speed, setSpeed] = useState(10);
   const [tab, setTab] = useState<Tab>("车辆");
+  const [mobileView, setMobileView] = useState<MobileView>("station");
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
   const [showAdd, setShowAdd] = useState(false);
@@ -577,6 +579,10 @@ export function Dashboard() {
     return "角色感知调度正常：B 枪优先匹配闪充车，A 枪服务剩余最早兼容车辆。";
   })();
 
+  const toggleRunning = () => setRunning((value) => !value);
+  const stepOnce = () => setState((current) => stepSimulation(current, config, 1));
+  const changeSpeed = (value: number) => setSpeed(value);
+
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -589,9 +595,9 @@ export function Dashboard() {
           <div className="clock-block"><span>仿真时间</span><strong>{formatTime(state.timeSec + 8 * 3600)}</strong></div>
         </div>
         <div className="transport-controls" role="group" aria-label="仿真控制">
-          <button className="primary-action" onClick={() => setRunning((value) => !value)}>{running ? "暂停" : "继续"}</button>
-          <button className="secondary-action" onClick={() => setState((current) => stepSimulation(current, config, 1))} disabled={running}>单步</button>
-          <label className="speed-control"><span>速度</span><select aria-label="仿真速度" value={speed} onChange={(event) => setSpeed(Number(event.target.value))}>{speedOptions.map((value) => <option value={value} key={value}>{value}×</option>)}</select></label>
+          <button className="primary-action" onClick={toggleRunning}>{running ? "暂停" : "继续"}</button>
+          <button className="secondary-action" onClick={stepOnce} disabled={running}>单步</button>
+          <label className="speed-control"><span>速度</span><select aria-label="仿真速度" value={speed} onChange={(event) => changeSpeed(Number(event.target.value))}>{speedOptions.map((value) => <option value={value} key={value}>{value}×</option>)}</select></label>
         </div>
         <div className="scenario-actions" role="group" aria-label="场景管理">
           <button className="secondary-action" onClick={() => { localStorage.setItem(`flash-sim-saved-${config.scenarioName}`, JSON.stringify(config)); setToast("场景已保存到本机"); }}>保存</button>
@@ -606,17 +612,19 @@ export function Dashboard() {
         </div>
       </header>
 
+      <header className="mobile-status-header">
+        <div className="mobile-product"><strong>闪充站仿真</strong><span>{config.scenarioName}</span></div>
+        <div className="mobile-simulation-status" aria-live="polite"><span className={`run-state ${running ? "running" : "paused"}`}>{running ? "运行中" : "已暂停"}</span><strong>{formatTime(state.timeSec + 8 * 3600)}</strong></div>
+      </header>
+
+      <nav className="mobile-view-switch" aria-label="移动任务视图">
+        {(["station", "control", "analysis"] as const).map((view) => <button key={view} type="button" aria-pressed={mobileView === view} className={mobileView === view ? "active" : ""} onClick={() => setMobileView(view)}>{view === "station" ? "站场" : view === "control" ? "控制" : "分析"}</button>)}
+      </nav>
+
       <div className="model-disclaimer">本项目为非官方仿真工具。部分预设参数根据公开资料整理或拟合，仅用于技术演示，不代表厂商实际控制策略或设备性能承诺。</div>
 
       <main className={`dashboard-grid ${queueExpanded ? "queue-expanded" : "queue-collapsed"}`} style={{ "--station-row-height": stationCollapsedHeight ? `${stationCollapsedHeight}px` : undefined } as CSSProperties}>
-        <section className="trend-overview panel">
-          <div className="trend-overview-head">
-            <div><h2>站点实时曲线</h2><p>电网、储能与车辆功率，最多显示最近 30 分钟</p></div>
-            <div className="trend-overview-actions"><button className="trend-sample-control" aria-label="调整趋势采样间隔" title="点击切换趋势采样间隔" onClick={() => { const currentIndex = sampleOptions.indexOf(config.historySampleSec ?? 5); updateConfig("historySampleSec", sampleOptions[(currentIndex + 1) % sampleOptions.length]); }}>采样间隔 <strong>{config.historySampleSec ?? 5}</strong><span>s</span></button><div className="trend-kpis"><span>车辆<strong>{formatPower(state.chargingPowerKw)}</strong></span><span>储能<strong>{state.storage.energyKWh.toFixed(1)} kWh</strong></span><span>队列<strong>{state.queue.length} 辆</strong></span><span>电网<strong>{gridStatusLabel}</strong></span></div></div>
-          </div>
-          <TrendCanvas history={state.history} storageCapacityKWh={state.storage.capacityKWh} storageMinSocPercent={state.storage.minSocPercent} currentStorageEnergyKWh={state.storage.energyKWh} currentStorageSocPercent={storageSoc} sampleIntervalSec={config.historySampleSec ?? 5} />
-        </section>
-
+        <div className={`task-view task-view-control ${mobileView === "control" ? "active" : ""}`}>
         <aside className="config-panel panel">
           <div className="panel-title"><div><h2>站点参数</h2></div><span className="live-pill">实时</span></div>
           <section className="parameter-section quick-controls" aria-labelledby="quick-controls-title">
@@ -699,7 +707,9 @@ export function Dashboard() {
             </div>
           </details>
         </aside>
+        </div>
 
+        <div className={`task-view task-view-station ${mobileView === "station" ? "active" : ""}`}>
         <section ref={stationPanelRef} className="station-panel panel">
           <div className="panel-title station-title"><div><h2>01# 兆瓦闪充站 · 双枪作业</h2></div><div className="station-status"><span className={activeLimit || state.gridControl.mode !== "normal" ? "warning-text" : "ok-text"}>{state.gridControl.mode === "outage" ? "电网断电 · 储能支撑" : state.gridControl.mode === "limited" ? `电网临时限至 ${effectiveGridLimit}kW` : activeLimit ? "功率受限" : "运行正常"}</span><small>T+{formatTime(state.timeSec)}</small></div></div>
           <div className="energy-summary" aria-label="电网、直流母线与储能功率流向">
@@ -746,6 +756,16 @@ export function Dashboard() {
           <div className="utilization-panel"><h3>枪口利用率</h3><div className="utilization-row"><div className="utilization-label"><span>A 通用枪</span><b>{state.timeSec ? Math.round(connectorA.busySec / state.timeSec * 100) : 0}%</b></div><i><em style={{ width: `${state.timeSec ? Math.min(100, connectorA.busySec / state.timeSec * 100) : 0}%` }} /></i></div><div className="utilization-row"><div className="utilization-label"><span>B 闪充专用</span><b>{state.timeSec ? Math.round(connectorB.busySec / state.timeSec * 100) : 0}%</b></div><i><em style={{ width: `${state.timeSec ? Math.min(100, connectorB.busySec / state.timeSec * 100) : 0}%` }} /></i></div><small>专用枪不兼容空闲 {formatDuration(connectorB.incompatibleIdleSec)}</small></div>
           <div className={`limit-card ${activeLimit ? "active" : ""}`}><span>{activeLimit ? "!" : "✓"}</span><div><strong>{activeLimit ? "当前存在功率限制" : "功率约束均满足"}</strong><p>{activeLimit ? `${policyNames[config.pilePolicy]}：A/B 实际功率受整桩或站级上限约束。` : "单枪 ≤1500kW · 整桩 ≤2100kW"}</p></div></div>
         </aside>
+        </div>
+
+        <div className={`task-view task-view-analysis ${mobileView === "analysis" ? "active" : ""}`}>
+        <section className="trend-overview panel">
+          <div className="trend-overview-head">
+            <div><h2>站点实时曲线</h2><p>电网、储能与车辆功率，最多显示最近 30 分钟</p></div>
+            <div className="trend-overview-actions"><button className="trend-sample-control" aria-label="调整趋势采样间隔" title="点击切换趋势采样间隔" onClick={() => { const currentIndex = sampleOptions.indexOf(config.historySampleSec ?? 5); updateConfig("historySampleSec", sampleOptions[(currentIndex + 1) % sampleOptions.length]); }}>采样间隔 <strong>{config.historySampleSec ?? 5}</strong><span>s</span></button><div className="trend-kpis"><span>车辆<strong>{formatPower(state.chargingPowerKw)}</strong></span><span>储能<strong>{state.storage.energyKWh.toFixed(1)} kWh</strong></span><span>队列<strong>{state.queue.length} 辆</strong></span><span>电网<strong>{gridStatusLabel}</strong></span></div></div>
+          </div>
+          <TrendCanvas history={state.history} storageCapacityKWh={state.storage.capacityKWh} storageMinSocPercent={state.storage.minSocPercent} currentStorageEnergyKWh={state.storage.energyKWh} currentStorageSocPercent={storageSoc} sampleIntervalSec={config.historySampleSec ?? 5} />
+        </section>
 
         <section className="data-panel panel">
           <nav className="tabs" aria-label="数据视图">{tabs.map(({ name, kind }) => <button className={`${tab === name ? "active " : ""}tab-${kind}`} key={name} onClick={() => setTab(name)}>{name}{name === "事件" && state.events.length > 0 && <span>{Math.min(99, state.events.length)}</span>}</button>)}{tab === "车辆" && <button className="export-csv" onClick={exportCsv}>导出车辆 CSV</button>}</nav>
@@ -777,7 +797,14 @@ export function Dashboard() {
           </div>}
           {tab === "参考 · 参数来源" && <div className="tab-content sources"><div className="source-intro"><h3>公开参数与模型假设分离</h3><p>{sourceNote}。所有分配算法与换车时长均作为研究模型，不声称拥有厂商完整 BMS 或站控策略。</p></div><table><thead><tr><th>参数</th><th>默认值</th><th>来源分类</th><th>可信度 / 说明</th></tr></thead><tbody><tr><td>单枪最大功率</td><td>1500kW</td><td><span className="source-tag official">官方公开参数</span></td><td>设备能力上限，非持续承诺</td></tr><tr><td>整桩双枪合计</td><td>2100kW</td><td><span className="source-tag media">公开媒体报道</span></td><td>可修改的共享硬上限</td></tr><tr><td>A 枪面向兼容车辆</td><td>true</td><td><span className="source-tag case">公开站点案例</span></td><td>通用角色</td></tr><tr><td>B 枪闪充专用</td><td>true</td><td><span className="source-tag case">企业公开回复</span></td><td>严格专用模式</td></tr><tr><td>车位换车周转</td><td>{config.turnoverSec ?? 60} 秒</td><td><span className="source-tag model">模型默认假设</span></td><td>包含驶离、确认与下一车进位准备</td></tr><tr><td>闪充专枪优先算法</td><td>{policyNames[config.pilePolicy]}</td><td><span className="source-tag model">模型默认假设</span></td><td>不代表厂商控制算法</td></tr><tr><td>A 枪 480kW</td><td>可选策略上限</td><td><span className="source-tag case">特定落地案例</span></td><td>不修改硬件铭牌上限</td></tr></tbody></table></div>}
         </section>
+        </div>
       </main>
+
+      <div className="mobile-transport" role="group" aria-label="移动仿真控制">
+        <button className="primary-action" onClick={toggleRunning}>{running ? "暂停" : "继续"}</button>
+        <button className="secondary-action" onClick={stepOnce} disabled={running}>单步</button>
+        <label><span>速度</span><select aria-label="移动仿真速度" value={speed} onChange={(event) => changeSpeed(Number(event.target.value))}>{speedOptions.map((value) => <option value={value} key={value}>{value}×</option>)}</select></label>
+      </div>
 
       <footer className="app-footer"><span>模型单位：功率 kW · 能量 kWh · 时间 s · SOC 0–100</span><span>随机种子 {config.randomSeed} · schema v{config.schemaVersion}</span><span>能量流符号：电网输入为正，储能放电为正 / 充电为负</span></footer>
 
