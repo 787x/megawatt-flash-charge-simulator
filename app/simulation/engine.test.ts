@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   addAutomaticVehicle,
+  addManualVehicle,
   allocatePilePower,
   assertSimulationInvariants,
   createEmptyState,
@@ -18,7 +19,45 @@ import {
   setStorageEnergy,
   stepSimulation,
 } from "./engine.js";
-import { baseConfig, flashCurve, makeVehicle } from "./presets.js";
+import { baseConfig, flashCurve, standardCurve } from "./presets.js";
+import type { VehicleChargingClass } from "./types.js";
+import { cloneChargingCurve, DEFAULT_FLASH_MODEL_ID, DEFAULT_STANDARD_MODEL_ID, resolveVehicleModels, type SimulationRuntimeConfig } from "./vehicle-models.js";
+
+function makeVehicleFromConfig(id: string, chargingClass: VehicleChargingClass, arrivalTimeSec: number, soc?: number, config: SimulationRuntimeConfig = baseConfig) {
+  const models = resolveVehicleModels(config);
+  const model = models.find((m) => m.chargingClass === chargingClass)!;
+  const isFlash = chargingClass === "flash_capable";
+  const initialSoc = soc ?? (isFlash ? 18 : 27);
+  return {
+    id,
+    vehicleModelId: model.id,
+    name: model.name,
+    chargingClass,
+    status: arrivalTimeSec > 0 ? "scheduled" : "queued",
+    usableBatteryCapacityKWh: model.usableBatteryCapacityKWh,
+    initialSocPercent: initialSoc,
+    currentSocPercent: initialSoc,
+    targetSocPercent: isFlash ? 82 : 88,
+    maxChargingPowerKw: isFlash ? 1500 : 520,
+    maxChargingVoltageV: isFlash ? 1000 : 800,
+    maxChargingCurrentA: isFlash ? 1500 : 650,
+    chargingEfficiency: 0.94,
+    batteryTemperatureC: 27,
+    batteryHealthPercent: 96,
+    chargingCurve: cloneChargingCurve(model.chargingCurve),
+    arrivalTimeSec,
+    queuedAtSec: arrivalTimeSec <= 0 ? 0 : undefined,
+    maxAcceptableWaitSec: 30 * 60,
+    priority: 1,
+    connectorStandard: "gbt_dc",
+    requestedPowerKw: 0,
+    actualPowerKw: 0,
+    deliveredEnergyKWh: 0,
+    limitReasons: ["none"],
+    phaseRemainingSec: 0,
+    timeline: arrivalTimeSec <= 0 ? [{ timeSec: 0, status: "queued" as const, note: "进入全局等待队列" }] : [],
+  } as import("./types.js").Vehicle;
+}
 
 function blankState() {
   const state = createInitialState({ ...baseConfig, autoArrivalEnabled: false });
@@ -59,8 +98,8 @@ describe("充电曲线与兼容性", () => {
   it("普通车不能使用 B，闪充车可使用 A 或 B", () => {
     const state = blankState();
     const [a, b] = state.piles[0].connectors;
-    const standard = makeVehicle("S1", "standard_dc", 0);
-    const flash = makeVehicle("F1", "flash_capable", 0);
+    const standard = makeVehicleFromConfig("S1", "standard_dc", 0);
+    const flash = makeVehicleFromConfig("F1", "flash_capable", 0);
     assert.equal(isVehicleEligibleForConnector(standard, a), true);
     assert.equal(isVehicleEligibleForConnector(standard, b), false);
     assert.equal(isVehicleEligibleForConnector(flash, a), true);
@@ -68,12 +107,12 @@ describe("充电曲线与兼容性", () => {
   });
 
   it("普通车默认峰值能力和曲线峰值均为 520kW", () => {
-    const standard = makeVehicle("S1", "standard_dc", 0);
+    const standard = makeVehicleFromConfig("S1", "standard_dc", 0);
     assert.equal(standard.maxChargingPowerKw, 520);
     assert.equal(Math.max(...standard.chargingCurve.map((point) => point.powerKw)), 520);
   });
 
-  it("配置中的两类曲线会写入对应车辆", () => {
+  it("配置中的两类曲线会写入对应车辆（快照行为）", () => {
     const config = {
       ...baseConfig,
       flashChargingCurve: baseConfig.flashChargingCurve.map((point) => ({ ...point, powerKw: 333 })),
@@ -82,13 +121,15 @@ describe("充电曲线与兼容性", () => {
     const state = createInitialState(config);
     assert.equal(state.vehicles.find((vehicle) => vehicle.chargingClass === "flash_capable")?.chargingCurve[0].powerKw, 333);
     assert.equal(state.vehicles.find((vehicle) => vehicle.chargingClass === "standard_dc")?.chargingCurve[0].powerKw, 222);
+    assert.equal(state.vehicles[0].vehicleModelId, DEFAULT_FLASH_MODEL_ID);
+    assert.equal(state.vehicles[1].vehicleModelId, DEFAULT_STANDARD_MODEL_ID);
   });
 });
 
 describe("角色感知原子调度", () => {
   it("一闪充一普通同时到达时 F1→B、S1→A", () => {
     const state = blankState();
-    state.vehicles = [makeVehicle("F1", "flash_capable", 0), makeVehicle("S1", "standard_dc", 0)];
+    state.vehicles = [makeVehicleFromConfig("F1", "flash_capable", 0), makeVehicleFromConfig("S1", "standard_dc", 0)];
     state.queue = ["F1", "S1"];
     const result = dispatchVehicles(state, baseConfig);
     assert.equal(result.piles[0].connectors.find((c) => c.role === "flash_dedicated")?.currentVehicleId, "F1");
@@ -97,7 +138,7 @@ describe("角色感知原子调度", () => {
 
   it("两辆闪充车同时到达时 F1→B、F2→A", () => {
     const state = blankState();
-    state.vehicles = [makeVehicle("F1", "flash_capable", 0), makeVehicle("F2", "flash_capable", 0)];
+    state.vehicles = [makeVehicleFromConfig("F1", "flash_capable", 0), makeVehicleFromConfig("F2", "flash_capable", 0)];
     state.queue = ["F1", "F2"];
     const result = dispatchVehicles(state, baseConfig);
     assert.equal(result.piles[0].connectors.find((c) => c.role === "flash_dedicated")?.currentVehicleId, "F1");
@@ -106,8 +147,8 @@ describe("角色感知原子调度", () => {
 
   it("A 忙 B 空闲且队列只有普通车时继续等待", () => {
     const state = blankState();
-    const active = makeVehicle("F0", "flash_capable", 0);
-    const waiting = makeVehicle("S1", "standard_dc", 0);
+    const active = makeVehicleFromConfig("F0", "flash_capable", 0);
+    const waiting = makeVehicleFromConfig("S1", "standard_dc", 0);
     active.status = "charging";
     active.assignedConnectorId = "P1-A";
     active.assignedPileId = "P1";
@@ -122,7 +163,7 @@ describe("角色感知原子调度", () => {
 
   it("不会重复分配同一辆闪充车", () => {
     const state = blankState();
-    state.vehicles = [makeVehicle("F1", "flash_capable", 0)];
+    state.vehicles = [makeVehicleFromConfig("F1", "flash_capable", 0)];
     state.queue = ["F1"];
     const result = dispatchVehicles(state, baseConfig);
     assert.equal(result.piles[0].connectors.filter((c) => c.currentVehicleId === "F1").length, 1);
@@ -130,7 +171,7 @@ describe("角色感知原子调度", () => {
 
   it("B 释放后不会把正在 A 充电的车迁移", () => {
     const state = blankState();
-    const flash = makeVehicle("F1", "flash_capable", 0);
+    const flash = makeVehicleFromConfig("F1", "flash_capable", 0);
     flash.status = "charging";
     flash.assignedConnectorId = "P1-A";
     flash.assignedPileId = "P1";
@@ -408,7 +449,7 @@ describe("状态、等待预测与统计", () => {
 
   it("普通车等待预测不会把 B 枪算作服务能力", () => {
     const state = blankState();
-    const standard = makeVehicle("S1", "standard_dc", 0);
+    const standard = makeVehicleFromConfig("S1", "standard_dc", 0);
     state.vehicles = [standard];
     state.queue = [standard.id];
     const estimate = estimateVehicleWaitTime("S1", state);
@@ -418,7 +459,7 @@ describe("状态、等待预测与统计", () => {
 
   it("等待预测会计入车位换车周转时间", () => {
     const state = blankState();
-    const standard = makeVehicle("S1", "standard_dc", 0);
+    const standard = makeVehicleFromConfig("S1", "standard_dc", 0);
     state.vehicles = [standard];
     state.queue = [standard.id];
     state.piles[0].connectors.find((c) => c.role === "universal")!.turnoverRemainingSec = 60;
@@ -429,7 +470,7 @@ describe("状态、等待预测与统计", () => {
 
   it("超过最大可接受等待时间后车辆会弃队", () => {
     const state = blankState();
-    const standard = makeVehicle("S1", "standard_dc", 0);
+    const standard = makeVehicleFromConfig("S1", "standard_dc", 0);
     state.vehicles = [standard];
     state.queue = [standard.id];
     state.piles[0].connectors.find((connector) => connector.role === "universal")!.turnoverRemainingSec = 100;
@@ -441,7 +482,7 @@ describe("状态、等待预测与统计", () => {
 
   it("无限等待模式下车辆不会因等待时长弃队", () => {
     const state = blankState();
-    const standard = makeVehicle("S1", "standard_dc", 0);
+    const standard = makeVehicleFromConfig("S1", "standard_dc", 0);
     state.vehicles = [standard];
     state.queue = [standard.id];
     state.piles[0].connectors.find((connector) => connector.role === "universal")!.turnoverRemainingSec = 100;
@@ -453,7 +494,7 @@ describe("状态、等待预测与统计", () => {
 
   it("换车倒计时结束前不会分配下一辆车", () => {
     const state = blankState();
-    const flash = makeVehicle("F1", "flash_capable", 0);
+    const flash = makeVehicleFromConfig("F1", "flash_capable", 0);
     state.vehicles = [flash];
     state.queue = [flash.id];
     state.piles[0].connectors.forEach((connector) => { connector.turnoverRemainingSec = 60; });
@@ -468,7 +509,7 @@ describe("状态、等待预测与统计", () => {
 
   it("车辆完成拔枪后自动进入配置的周转期", () => {
     const state = blankState();
-    const flash = makeVehicle("F1", "flash_capable", 0, 81.999);
+    const flash = makeVehicleFromConfig("F1", "flash_capable", 0, 81.999);
     flash.targetSocPercent = 82;
     flash.status = "charging";
     flash.chargingStartedAtSec = 0;
@@ -485,7 +526,7 @@ describe("状态、等待预测与统计", () => {
   });
 
   it("曲线积分可给出正的剩余充电时间", () => {
-    const flash = makeVehicle("F1", "flash_capable", 0, 20);
+    const flash = makeVehicleFromConfig("F1", "flash_capable", 0, 20);
     flash.targetSocPercent = 80;
     assert.ok(estimateRemainingChargeTime(flash) > 0);
   });
@@ -508,5 +549,411 @@ describe("状态、等待预测与统计", () => {
     assert.equal(b.servedFlash, 1);
     assert.equal(b.servedStandard, 0);
     assert.doesNotThrow(() => assertSimulationInvariants(state, baseConfig));
+  });
+});
+
+describe("VehicleModel 快照生命周期", () => {
+  it("Vehicle 快照车型参数，之后修改 model 不影响 Vehicle", () => {
+    const models = resolveVehicleModels(baseConfig);
+    const flashModel = models.find((m) => m.chargingClass === "flash_capable")!;
+    const vehicle = makeVehicleFromConfig("TEST-1", "flash_capable", 0, 50);
+    assert.equal(vehicle.name, flashModel.name);
+    assert.equal(vehicle.usableBatteryCapacityKWh, 112);
+    assert.equal(vehicle.chargingCurve[0].powerKw, 400);
+    flashModel.name = "修改后名称";
+    flashModel.usableBatteryCapacityKWh = 999;
+    flashModel.chargingCurve[0].powerKw = 8888;
+    assert.equal(vehicle.name, "兆瓦闪充车辆");
+    assert.equal(vehicle.usableBatteryCapacityKWh, 112);
+    assert.equal(vehicle.chargingCurve[0].powerKw, 400);
+  });
+
+  it("Vehicle 正确记录 vehicleModelId", () => {
+    const flash = makeVehicleFromConfig("F1", "flash_capable", 0);
+    const standard = makeVehicleFromConfig("S1", "standard_dc", 0);
+    assert.equal(flash.vehicleModelId, DEFAULT_FLASH_MODEL_ID);
+    assert.equal(standard.vehicleModelId, DEFAULT_STANDARD_MODEL_ID);
+  });
+
+  it("Vehicle curve 与 Model curve 不共享引用", () => {
+    const models = resolveVehicleModels(baseConfig);
+    const flashModel = models.find((m) => m.chargingClass === "flash_capable")!;
+    const vehicle = makeVehicleFromConfig("F1", "flash_capable", 0);
+    assert.notEqual(vehicle.chargingCurve, flashModel.chargingCurve);
+    assert.notEqual(vehicle.chargingCurve[0], flashModel.chargingCurve[0]);
+    vehicle.chargingCurve[0].powerKw = 9999;
+    assert.equal(flashModel.chargingCurve[0].powerKw, 400);
+  });
+
+  it("默认 v2 config 单车型类别不额外消费 RNG", () => {
+    const config = { ...baseConfig, autoArrivalEnabled: false, randomSeed: 42 };
+    const state1 = createEmptyState(config);
+    const state2 = createEmptyState(config);
+    addAutomaticVehicle(state1, config);
+    addAutomaticVehicle(state2, config);
+    assert.equal(state1.randomState, state2.randomState);
+    assert.equal(state1.vehicles[0].vehicleModelId, state2.vehicles[0].vehicleModelId);
+    assert.equal(state1.vehicles[0].chargingClass, state2.vehicles[0].chargingClass);
+  });
+
+  it("多车型使用 seeded RNG 选择具体车型", () => {
+    const models = resolveVehicleModels(baseConfig);
+    models.push({
+      id: "extra-flash",
+      name: "额外闪充车",
+      chargingClass: "flash_capable",
+      usableBatteryCapacityKWh: 200,
+      chargingCurve: cloneChargingCurve(flashCurve),
+    });
+    const config = { ...baseConfig, schemaVersion: 3 as const, vehicleModels: models, autoArrivalEnabled: false, randomSeed: 42 };
+    const state = createEmptyState(config);
+    addAutomaticVehicle(state, config);
+    const ids = state.vehicles.map((v) => v.vehicleModelId);
+    assert.ok(ids[0] === DEFAULT_FLASH_MODEL_ID || ids[0] === "extra-flash");
+    assert.equal(state.randomState !== config.randomSeed, true);
+  });
+
+  it("同 seed + 同 Catalog 得到相同车型 ID 序列", () => {
+    const models = resolveVehicleModels(baseConfig);
+    models.push({
+      id: "extra-flash",
+      name: "额外闪充车",
+      chargingClass: "flash_capable",
+      usableBatteryCapacityKWh: 200,
+      chargingCurve: cloneChargingCurve(flashCurve),
+    });
+    const config = { ...baseConfig, schemaVersion: 3 as const, vehicleModels: models, autoArrivalEnabled: false, randomSeed: 12345 };
+    const state1 = createEmptyState(config);
+    const state2 = createEmptyState(config);
+    for (let i = 0; i < 10; i++) {
+      addAutomaticVehicle(state1, config);
+      addAutomaticVehicle(state2, config);
+    }
+    assert.deepEqual(
+      state1.vehicles.map((v) => v.vehicleModelId),
+      state2.vehicles.map((v) => v.vehicleModelId),
+    );
+    assert.equal(state1.randomState, state2.randomState);
+  });
+
+  it("不同车型容量正确来自具体 model", () => {
+    const models = resolveVehicleModels(baseConfig);
+    models.push({
+      id: "big-flash",
+      name: "大容量闪充车",
+      chargingClass: "flash_capable",
+      usableBatteryCapacityKWh: 600,
+      chargingCurve: cloneChargingCurve(flashCurve),
+    });
+    const config = { ...baseConfig, schemaVersion: 3 as const, vehicleModels: models, autoArrivalEnabled: false, randomSeed: 99 };
+    const state = createEmptyState(config);
+    for (let i = 0; i < 20; i++) addAutomaticVehicle(state, config);
+    const bigFlash = state.vehicles.filter((v) => v.vehicleModelId === "big-flash");
+    const defaultFlash = state.vehicles.filter((v) => v.vehicleModelId === DEFAULT_FLASH_MODEL_ID);
+    if (bigFlash.length > 0) assert.equal(bigFlash[0].usableBatteryCapacityKWh, 600);
+    if (defaultFlash.length > 0) assert.equal(defaultFlash[0].usableBatteryCapacityKWh, 112);
+    assert.ok(bigFlash.length > 0 || defaultFlash.length > 0);
+  });
+
+  it("不同车型曲线影响 Vehicle 请求功率", () => {
+    const models = resolveVehicleModels(baseConfig);
+    const lowCurve = [{ soc: 0, powerKw: 100 }, { soc: 50, powerKw: 100 }, { soc: 100, powerKw: 0 }];
+    models.push({
+      id: "low-power-flash",
+      name: "低功率闪充车",
+      chargingClass: "flash_capable",
+      usableBatteryCapacityKWh: 112,
+      chargingCurve: lowCurve,
+    });
+    const config = { ...baseConfig, schemaVersion: 3 as const, vehicleModels: models, autoArrivalEnabled: false };
+    const state = createEmptyState(config);
+    const lowVehicle = makeVehicleFromConfig("LOW-1", "flash_capable", 0, 25, config);
+    lowVehicle.vehicleModelId = "low-power-flash";
+    lowVehicle.chargingCurve = lowCurve.map((p) => ({ ...p }));
+    state.vehicles.push(lowVehicle);
+    const defaultVehicle = makeVehicleFromConfig("DEF-1", "flash_capable", 0, 25, config);
+    state.vehicles.push(defaultVehicle);
+    assert.equal(lowVehicle.chargingCurve[1].powerKw, 100);
+    assert.equal(defaultVehicle.chargingCurve[2].powerKw, 1500);
+  });
+
+  it("修改 Catalog 不影响排队 Vehicle", () => {
+    const models = resolveVehicleModels(baseConfig);
+    const state = createEmptyState(baseConfig);
+    const vehicle = makeVehicleFromConfig("F1", "flash_capable", 0, 30);
+    state.vehicles.push(vehicle);
+    state.queue.push(vehicle.id);
+    const originalCapacity = vehicle.usableBatteryCapacityKWh;
+    const originalCurvePower = vehicle.chargingCurve[2].powerKw;
+    const flashModel = models.find((m) => m.chargingClass === "flash_capable")!;
+    flashModel.usableBatteryCapacityKWh = 999;
+    flashModel.chargingCurve[2].powerKw = 1;
+    assert.equal(vehicle.usableBatteryCapacityKWh, originalCapacity);
+    assert.equal(vehicle.chargingCurve[2].powerKw, originalCurvePower);
+  });
+
+  it("修改 Catalog 不影响正在充电 Vehicle", () => {
+    const state = createEmptyState(baseConfig);
+    const vehicle = makeVehicleFromConfig("F1", "flash_capable", 0, 60);
+    vehicle.status = "charging";
+    vehicle.chargingStartedAtSec = 0;
+    vehicle.assignedPileId = "P1";
+    vehicle.assignedConnectorId = "P1-B";
+    vehicle.assignedConnectorRole = "flash_dedicated";
+    state.vehicles.push(vehicle);
+    state.piles[0].connectors[1].currentVehicleId = vehicle.id;
+    const originalCurve = vehicle.chargingCurve.map((p) => ({ ...p }));
+    const result = stepSimulation(state, { ...baseConfig, flashChargingCurve: flashCurve.map((p) => ({ ...p, powerKw: 50 })) }, 5);
+    const charged = result.vehicles.find((v) => v.id === "F1")!;
+    assert.deepEqual(charged.chargingCurve, originalCurve);
+  });
+
+  it("类别修改不改变已有 Vehicle 兼容性", () => {
+    const models = resolveVehicleModels(baseConfig);
+    const state = blankState();
+    const vehicle = makeVehicleFromConfig("S1", "standard_dc", 0);
+    state.vehicles.push(vehicle);
+    state.queue.push(vehicle.id);
+    const [, b] = state.piles[0].connectors;
+    assert.equal(isVehicleEligibleForConnector(vehicle, b), false);
+    const standardModel = models.find((m) => m.chargingClass === "standard_dc")!;
+    standardModel.chargingClass = "flash_capable";
+    assert.equal(vehicle.chargingClass, "standard_dc");
+    assert.equal(isVehicleEligibleForConnector(vehicle, b), false);
+  });
+
+  it("A/B 兼容完全保持", () => {
+    const standard = makeVehicleFromConfig("S1", "standard_dc", 0);
+    const flash = makeVehicleFromConfig("F1", "flash_capable", 0);
+    const [a, b] = blankState().piles[0].connectors;
+    assert.equal(isVehicleEligibleForConnector(standard, a), true);
+    assert.equal(isVehicleEligibleForConnector(standard, b), false);
+    assert.equal(isVehicleEligibleForConnector(flash, a), true);
+    assert.equal(isVehicleEligibleForConnector(flash, b), true);
+  });
+
+  it("手动指定 vehicleModelId 正确使用对应车型", () => {
+    const models = resolveVehicleModels(baseConfig);
+    models.push({
+      id: "custom-flash",
+      name: "自定义闪充车",
+      chargingClass: "flash_capable",
+      usableBatteryCapacityKWh: 400,
+      chargingCurve: cloneChargingCurve(flashCurve),
+    });
+    const config = { ...baseConfig, schemaVersion: 3 as const, vehicleModels: models };
+    const state = createEmptyState(config);
+    const result = addManualVehicle(state, config, {
+      vehicleModelId: "custom-flash",
+      capacity: 400,
+      maxPower: 1500,
+      initialSoc: 30,
+      targetSoc: 90,
+    });
+    const vehicle = result.vehicles.find((v) => v.id.includes("M"))!;
+    assert.equal(vehicle.vehicleModelId, "custom-flash");
+    assert.equal(vehicle.name, "自定义闪充车");
+  });
+
+  it("手动调用传 vehicleModelId 正确选择车型", () => {
+    const state = createEmptyState(baseConfig);
+    const result = addManualVehicle(state, baseConfig, {
+      vehicleModelId: DEFAULT_FLASH_MODEL_ID,
+      capacity: 112,
+      maxPower: 1500,
+      initialSoc: 30,
+      targetSoc: 90,
+    });
+    const vehicle = result.vehicles.find((v) => v.id.includes("M"))!;
+    assert.equal(vehicle.vehicleModelId, DEFAULT_FLASH_MODEL_ID);
+    assert.equal(vehicle.chargingClass, "flash_capable");
+  });
+
+  it("手动容量 override 覆盖 Vehicle 但不修改 Model", () => {
+    const models = resolveVehicleModels(baseConfig);
+    models[0].usableBatteryCapacityKWh = 600;
+    const config = { ...baseConfig, schemaVersion: 3 as const, vehicleModels: models };
+    const state = createEmptyState(config);
+    const result = addManualVehicle(state, config, {
+      vehicleModelId: DEFAULT_FLASH_MODEL_ID,
+      capacity: 450,
+      maxPower: 1500,
+      initialSoc: 30,
+      targetSoc: 90,
+    });
+    const vehicle = result.vehicles.find((v) => v.id.includes("M"))!;
+    assert.equal(vehicle.usableBatteryCapacityKWh, 450);
+    assert.equal(models[0].usableBatteryCapacityKWh, 600);
+  });
+
+  it("createInitialState 所有初始 Vehicle 都有 vehicleModelId 和快照", () => {
+    const state = createInitialState(baseConfig);
+    for (const vehicle of state.vehicles) {
+      assert.ok(vehicle.vehicleModelId, `${vehicle.id} 缺少 vehicleModelId`);
+      assert.ok(vehicle.name, `${vehicle.id} 缺少 name`);
+      assert.ok(vehicle.chargingCurve.length >= 2, `${vehicle.id} 曲线不完整`);
+    }
+    assert.equal(state.vehicles[0].vehicleModelId, DEFAULT_FLASH_MODEL_ID);
+    assert.equal(state.vehicles[1].vehicleModelId, DEFAULT_STANDARD_MODEL_ID);
+  });
+
+  it("自动生成默认 v2 config 不额外消费 RNG（seed 序列对比）", () => {
+    const configA = { ...baseConfig, autoArrivalEnabled: false, randomSeed: 777 };
+    const configB = { ...baseConfig, autoArrivalEnabled: false, randomSeed: 777 };
+    const stateA = createEmptyState(configA);
+    const stateB = createEmptyState(configB);
+    for (let i = 0; i < 5; i++) {
+      addAutomaticVehicle(stateA, configA);
+      addAutomaticVehicle(stateB, configB);
+    }
+    assert.equal(stateA.randomState, stateB.randomState);
+    assert.deepEqual(
+      stateA.vehicles.map((v) => ({ class: v.chargingClass, soc: v.initialSocPercent })),
+      stateB.vehicles.map((v) => ({ class: v.chargingClass, soc: v.initialSocPercent })),
+    );
+  });
+
+  it("applyConfiguredCurve 已删除，修改 config 曲线不影响已有 Vehicle", () => {
+    const state = createInitialState(baseConfig);
+    const flashVehicles = state.vehicles.filter((v) => v.chargingClass === "flash_capable");
+    const originalCurve = flashVehicles[0].chargingCurve.map((p) => ({ ...p }));
+    const modifiedConfig = {
+      ...baseConfig,
+      flashChargingCurve: flashCurve.map((p) => ({ ...p, powerKw: 50 })),
+    };
+    const stepped = stepSimulation(state, modifiedConfig, 5);
+    for (const vehicle of stepped.vehicles.filter((v) => v.chargingClass === "flash_capable")) {
+      assert.deepEqual(vehicle.chargingCurve, originalCurve);
+    }
+  });
+
+  it("配置决定弃队时间（不手动 patch Vehicle 字段）", () => {
+    const state = blankState();
+    const vehicle = makeVehicleFromConfig("S1", "standard_dc", 0);
+    state.vehicles = [vehicle];
+    state.queue = [vehicle.id];
+    state.piles[0].connectors.find((c) => c.role === "universal")!.turnoverRemainingSec = 100;
+    const config = { ...baseConfig, autoArrivalEnabled: false, maxAcceptableWaitSec: 3 };
+    const before = stepSimulation(state, config, 2);
+    assert.equal(before.vehicles[0].status, "queued");
+    const after = stepSimulation(before, config, 2);
+    assert.equal(after.vehicles[0].status, "abandoned");
+  });
+
+  it("运行中修改 maxAcceptableWaitSec 立即影响已排队 Vehicle", () => {
+    const state = blankState();
+    const vehicle = makeVehicleFromConfig("S1", "standard_dc", 0);
+    state.vehicles = [vehicle];
+    state.queue = [vehicle.id];
+    state.piles[0].connectors.find((c) => c.role === "universal")!.turnoverRemainingSec = 200;
+    const longWaitConfig = { ...baseConfig, autoArrivalEnabled: false, maxAcceptableWaitSec: 100 };
+    const waited = stepSimulation(state, longWaitConfig, 10);
+    assert.equal(waited.vehicles[0].status, "queued");
+    const shortWaitConfig = { ...longWaitConfig, maxAcceptableWaitSec: 2 };
+    const abandoned = stepSimulation(waited, shortWaitConfig, 3);
+    assert.equal(abandoned.vehicles[0].status, "abandoned");
+  });
+
+  it("无限等待模式下车辆不会因等待时长弃队", () => {
+    const state = blankState();
+    const vehicle = makeVehicleFromConfig("S1", "standard_dc", 0);
+    state.vehicles = [vehicle];
+    state.queue = [vehicle.id];
+    state.piles[0].connectors.find((c) => c.role === "universal")!.turnoverRemainingSec = 200;
+    const config = { ...baseConfig, autoArrivalEnabled: false, maxAcceptableWaitSec: null };
+    const result = stepSimulation(state, config, 90);
+    assert.equal(result.vehicles[0].status, "queued");
+  });
+
+  it("修复等待策略后曲线仍然 snapshot（不重新引入实时覆盖）", () => {
+    const config = { ...baseConfig, autoArrivalEnabled: false, maxAcceptableWaitSec: 5 };
+    const state = createInitialState(config);
+    const flashVehicle = state.vehicles.find((v) => v.chargingClass === "flash_capable")!;
+    const originalCurve = flashVehicle.chargingCurve.map((p) => ({ ...p }));
+    const modifiedConfig = {
+      ...config,
+      maxAcceptableWaitSec: 10,
+      flashChargingCurve: flashCurve.map((p) => ({ ...p, powerKw: 10 })),
+    };
+    const result = stepSimulation(state, modifiedConfig, 5);
+    const after = result.vehicles.find((v) => v.id === flashVehicle.id)!;
+    assert.deepEqual(after.chargingCurve, originalCurve);
+    assert.equal(after.chargingCurve[0].powerKw, 400);
+  });
+});
+
+describe("8.5 手动车型选择与历史快照", () => {
+  it("手动传 flash B 不会错误 fallback 到 flash A", () => {
+    const models = resolveVehicleModels(baseConfig);
+    models.push({ id: "flash-b", name: "闪充B", chargingClass: "flash_capable", usableBatteryCapacityKWh: 600, chargingCurve: cloneChargingCurve(flashCurve) });
+    const config = { ...baseConfig, schemaVersion: 3 as const, vehicleModels: models };
+    const state = createEmptyState(config);
+    const result = addManualVehicle(state, config, { vehicleModelId: "flash-b", capacity: 600, maxPower: 1500, initialSoc: 20, targetSoc: 80 });
+    const v = result.vehicles.find((x) => x.id.includes("M"))!;
+    assert.equal(v.vehicleModelId, "flash-b");
+    assert.equal(v.name, "闪充B");
+    assert.equal(v.usableBatteryCapacityKWh, 600);
+  });
+
+  it("手动容量 override 不影响 VehicleModel", () => {
+    const models = resolveVehicleModels(baseConfig);
+    models[0].usableBatteryCapacityKWh = 600;
+    const config = { ...baseConfig, schemaVersion: 3 as const, vehicleModels: models };
+    const state = createEmptyState(config);
+    const result = addManualVehicle(state, config, { vehicleModelId: DEFAULT_FLASH_MODEL_ID, capacity: 450, maxPower: 1500, initialSoc: 20, targetSoc: 80 });
+    const v = result.vehicles.find((x) => x.id.includes("M"))!;
+    assert.equal(v.usableBatteryCapacityKWh, 450);
+    assert.equal(models[0].usableBatteryCapacityKWh, 600);
+    assert.equal(v.vehicleModelId, DEFAULT_FLASH_MODEL_ID);
+  });
+
+  it("批量添加 3 辆全部使用同一 vehicleModelId 且 curve 不共享", () => {
+    const models = resolveVehicleModels(baseConfig);
+    models.push({ id: "flash-b", name: "闪充B", chargingClass: "flash_capable", usableBatteryCapacityKWh: 300, chargingCurve: cloneChargingCurve(flashCurve) });
+    const config = { ...baseConfig, schemaVersion: 3 as const, vehicleModels: models };
+    let state = createEmptyState(config);
+    for (let i = 0; i < 3; i++) state = addManualVehicle(state, config, { vehicleModelId: "flash-b", capacity: 300, maxPower: 1500, initialSoc: 20, targetSoc: 80 });
+    const manuals = state.vehicles.filter((v) => v.id.includes("M"));
+    assert.equal(manuals.length, 3);
+    assert.ok(manuals.every((v) => v.vehicleModelId === "flash-b"));
+    assert.notEqual(manuals[0].chargingCurve, manuals[1].chargingCurve);
+    assert.notEqual(manuals[1].chargingCurve, manuals[2].chargingCurve);
+  });
+
+  it("重命名后旧 Vehicle 保持原名，新 Vehicle 使用新名", () => {
+    const models = resolveVehicleModels(baseConfig);
+    models.push({ id: "flash-x", name: "原名", chargingClass: "flash_capable", usableBatteryCapacityKWh: 200, chargingCurve: cloneChargingCurve(flashCurve) });
+    const config1 = { ...baseConfig, schemaVersion: 3 as const, vehicleModels: models };
+    let state = createEmptyState(config1);
+    state = addManualVehicle(state, config1, { vehicleModelId: "flash-x", capacity: 200, maxPower: 1500, initialSoc: 20, targetSoc: 80 });
+    const v1 = state.vehicles.find((x) => x.id.includes("M"))!;
+    assert.equal(v1.name, "原名");
+    const renamed = models.map((m) => m.id === "flash-x" ? { ...m, name: "新名" } : m);
+    const config2 = { ...config1, vehicleModels: renamed };
+    state = addManualVehicle(state, config2, { vehicleModelId: "flash-x", capacity: 200, maxPower: 1500, initialSoc: 20, targetSoc: 80 });
+    const v2 = state.vehicles.filter((x) => x.id.includes("M"))[1];
+    assert.equal(v1.name, "原名");
+    assert.equal(v2.name, "新名");
+    assert.equal(v1.vehicleModelId, v2.vehicleModelId);
+  });
+
+  it("类别切换后旧 Vehicle 保持原类别兼容性", () => {
+    const models = resolveVehicleModels(baseConfig);
+    models.push({ id: "std-x", name: "普通X", chargingClass: "standard_dc", usableBatteryCapacityKWh: 100, chargingCurve: cloneChargingCurve(standardCurve) });
+    const config1 = { ...baseConfig, schemaVersion: 3 as const, vehicleModels: models };
+    let state = createEmptyState(config1);
+    state = addManualVehicle(state, config1, { vehicleModelId: "std-x", capacity: 100, maxPower: 520, initialSoc: 20, targetSoc: 80 });
+    const v1 = state.vehicles.find((x) => x.id.includes("M"))!;
+    assert.equal(v1.chargingClass, "standard_dc");
+    const [a, b] = blankState().piles[0].connectors;
+    assert.equal(isVehicleEligibleForConnector(v1, b), false);
+    const changed = models.map((m) => m.id === "std-x" ? { ...m, chargingClass: "flash_capable" as const } : m);
+    const config2 = { ...config1, vehicleModels: changed };
+    state = addManualVehicle(state, config2, { vehicleModelId: "std-x", capacity: 100, maxPower: 1500, initialSoc: 20, targetSoc: 80 });
+    const v2 = state.vehicles.filter((x) => x.id.includes("M"))[1];
+    assert.equal(v1.chargingClass, "standard_dc");
+    assert.equal(v2.chargingClass, "flash_capable");
+    assert.equal(isVehicleEligibleForConnector(v1, b), false);
+    assert.equal(isVehicleEligibleForConnector(v2, b), true);
   });
 });

@@ -11,7 +11,6 @@ import {
   getEffectiveGridLimit,
   getGridAvailableCapacityUtilizationPercent,
   getGridRatedCapacityUtilizationPercent,
-  getConfigForScenario,
   setGridControl,
   setStorageEnergy,
   stepSimulation,
@@ -21,11 +20,15 @@ import type {
   ChargingCurvePoint,
   Connector,
   SimulationConfig,
+  SimulationConfigV3,
   SimulationState,
   Vehicle,
   VehicleChargingClass,
+  VehicleModel,
   PowerLimitReason,
 } from "../simulation/types";
+import { normalizeSimulationConfig, cloneConfigV3, getScenarioConfigV3, parseSimulationConfig } from "../simulation/config-persistence";
+import { cloneChargingCurve, DEFAULT_FLASH_MODEL_ID, DEFAULT_STANDARD_MODEL_ID, DEFAULT_FLASH_CAPACITY_KWH, DEFAULT_STANDARD_CAPACITY_KWH, cloneDefaultChargingCurve, createVehicleModel as createVehicleModelHelper, renameVehicleModel as renameVehicleModelHelper, canChangeModelClass, changeModelClass, restoreDefaultCurve as restoreDefaultCurveHelper, isModelNameValid, isModelNameUnique, CAPACITY_MIN_KWH, CAPACITY_MAX_KWH, resolveVehicleModelId, isDefaultVehicleModel, canDeleteVehicleModel, deleteVehicleModel as deleteVehicleModelHelper } from "../simulation/vehicle-models";
 
 const speedOptions = [1, 5, 10, 30, 60, 120, 300];
 const sampleOptions = [1, 5, 10, 30, 60];
@@ -35,7 +38,7 @@ const tabs = [
   { name: "车辆", kind: "live" },
   { name: "事件", kind: "live" },
   { name: "运营结果", kind: "result" },
-  { name: "模型 · 充电曲线", kind: "model" },
+  { name: "模型 · 车型与曲线", kind: "model" },
   { name: "参考 · 参数来源", kind: "reference" },
 ] as const;
 type Tab = typeof tabs[number]["name"];
@@ -133,7 +136,7 @@ function VehicleGlyph({ vehicle, compact = false, onClick }: { vehicle: Vehicle;
       className={`vehicle-glyph ${vehicle.chargingClass === "flash_capable" ? "flash" : "standard"} ${compact ? "compact" : ""}`}
       onClick={onClick}
       aria-label={`查看 ${vehicle.id} 详情`}
-      title={`${vehicle.id} · ${vehicle.chargingClass === "flash_capable" ? "闪充兼容" : "普通直流"}`}
+      title={`${vehicle.id} · ${vehicle.name} · ${vehicle.chargingClass === "flash_capable" ? "闪充" : "普通"}`}
     >
       <span className="vehicle-window" />
       <span className="vehicle-id">{vehicle.id}</span>
@@ -142,7 +145,7 @@ function VehicleGlyph({ vehicle, compact = false, onClick }: { vehicle: Vehicle;
   );
 }
 
-function ConnectorBay({ connector, state, config, onVehicle }: { connector: Connector; state: SimulationState; config: SimulationConfig; onVehicle: (vehicle: Vehicle) => void }) {
+function ConnectorBay({ connector, state, config, onVehicle }: { connector: Connector; state: SimulationState; config: SimulationConfigV3; onVehicle: (vehicle: Vehicle) => void }) {
   const vehicle = state.vehicles.find((item) => item.id === connector.currentVehicleId);
   const isTurnover = !vehicle && connector.turnoverRemainingSec > 0;
   const standardWaiting = state.queue.filter((id) => state.vehicles.find((item) => item.id === id)?.chargingClass === "standard_dc").length;
@@ -171,7 +174,7 @@ function ConnectorBay({ connector, state, config, onVehicle }: { connector: Conn
       {vehicle ? <div className="vehicle-session">
         <VehicleGlyph vehicle={vehicle} onClick={() => onVehicle(vehicle)} />
         <div className="vehicle-session-data">
-          <div className="vehicle-session-head"><div><strong>{vehicle.id}</strong><span>{vehicle.chargingClass === "flash_capable" ? "闪充兼容" : "普通直流"}</span></div><small>{statusNames[vehicle.status]}</small></div>
+          <div className="vehicle-session-head"><div><strong>{vehicle.id}</strong><span className="vehicle-session-model" title={vehicle.name}>{vehicle.name}</span><small>{vehicle.chargingClass === "flash_capable" ? "闪充" : "普通"}</small></div><small>{statusNames[vehicle.status]}</small></div>
           <div className="connector-soc"><div><span>SOC</span><strong>{vehicle.currentSocPercent.toFixed(1)}%</strong><small>目标 {vehicle.targetSocPercent}%</small></div><i><em style={{ width: `${Math.min(100, vehicle.currentSocPercent)}%` }} /><b style={{ left: `${Math.min(100, vehicle.targetSocPercent)}%` }} /></i></div>
           <div className="session-eta"><span>预计剩余</span><strong>{remainingChargeSec > 0 ? formatDuration(remainingChargeSec) : "—"}</strong></div>
         </div>
@@ -271,8 +274,8 @@ function GridUtilizationRow({ label, accessibleLabel, percent, importEnergyKWh, 
 }
 
 export function Dashboard() {
-  const [config, setConfig] = useState<SimulationConfig>(baseConfig);
-  const [state, setState] = useState<SimulationState>(() => createInitialState(baseConfig));
+  const [config, setConfig] = useState<SimulationConfigV3>(() => cloneConfigV3(normalizeSimulationConfig(baseConfig)));
+  const [state, setState] = useState<SimulationState>(() => createInitialState(normalizeSimulationConfig(baseConfig)));
   const [running, setRunning] = useState(true);
   const [speed, setSpeed] = useState(10);
   const [tab, setTab] = useState<Tab>("车辆");
@@ -282,8 +285,16 @@ export function Dashboard() {
   const [showHelp, setShowHelp] = useState(false);
   const [showReset, setShowReset] = useState(false);
   const [toast, setToast] = useState("");
-  const [curveClass, setCurveClass] = useState<VehicleChargingClass>("flash_capable");
-  const [manual, setManual] = useState({ chargingClass: "flash_capable" as VehicleChargingClass, capacity: 112, maxPower: 1500, initialSoc: 20, targetSoc: 80, quantity: 1 });
+  const [selectedVehicleModelId, setSelectedVehicleModelId] = useState<string>(DEFAULT_FLASH_MODEL_ID);
+  const [showNewModel, setShowNewModel] = useState(false);
+  const [showRenameModel, setShowRenameModel] = useState(false);
+  const [showDeleteModel, setShowDeleteModel] = useState(false);
+  const [newModelDraft, setNewModelDraft] = useState({ name: "", chargingClass: "flash_capable" as VehicleChargingClass, capacity: 112 });
+  const [renameDraft, setRenameDraft] = useState("");
+  const [renameError, setRenameError] = useState("");
+  const [newModelError, setNewModelError] = useState("");
+  const [manual, setManual] = useState({ capacity: 112, maxPower: 1500, initialSoc: 20, targetSoc: 80, quantity: 1 });
+  const [manualVehicleModelId, setManualVehicleModelId] = useState<string>(DEFAULT_FLASH_MODEL_ID);
   const [gridLimitDraft, setGridLimitDraft] = useState(500);
   const [queueExpanded, setQueueExpanded] = useState(false);
   const [queuePreviewLimit, setQueuePreviewLimit] = useState(minimumQueuePreview);
@@ -299,12 +310,10 @@ export function Dashboard() {
       if (savedTheme === "light") setTheme("light");
       if (!saved) return;
       try {
-        const parsed = JSON.parse(saved) as SimulationConfig;
-        if (parsed.schemaVersion === 2) {
-          const migrated = { ...baseConfig, ...parsed };
-          setConfig(migrated);
-          setState(createInitialState(migrated));
-        }
+        const parsed = JSON.parse(saved);
+        const normalized = normalizeSimulationConfig(parsed);
+        setConfig(normalized);
+        setState(createInitialState(normalized));
       } catch {
         localStorage.removeItem("flash-sim-config");
       }
@@ -320,6 +329,12 @@ export function Dashboard() {
   useEffect(() => {
     localStorage.setItem("flash-sim-config", JSON.stringify(config));
   }, [config]);
+
+  useEffect(() => {
+    if (!config.vehicleModels.some((m) => m.id === selectedVehicleModelId)) {
+      setSelectedVehicleModelId(resolveVehicleModelId(config.vehicleModels));
+    }
+  }, [config.vehicleModels, selectedVehicleModelId]);
 
   useEffect(() => {
     if (!running) return;
@@ -398,21 +413,27 @@ export function Dashboard() {
   const hiddenQueueCount = Math.max(0, state.queue.length - queuePreviewLimit);
   const sourceNote = config.universalPolicyCapKw ? `A 枪启用 ${config.universalPolicyCapKw}kW 案例策略上限` : "A/B 单枪铭牌上限均为 1500kW";
 
-  const updateConfig = <K extends keyof SimulationConfig>(key: K, value: SimulationConfig[K]) => setConfig((current) => ({ ...current, [key]: value }));
+  const updateConfig = <K extends keyof SimulationConfigV3>(key: K, value: SimulationConfigV3[K]) => setConfig((current) => ({ ...current, [key]: value }));
   const updateMaxAcceptableWait = (value: number | null) => {
     updateConfig("maxAcceptableWaitSec", value);
     setState((current) => ({ ...current, vehicles: current.vehicles.map((vehicle) => ({ ...vehicle, maxAcceptableWaitSec: value })) }));
   };
-  const curveKey = curveClass === "flash_capable" ? "flashChargingCurve" : "standardChargingCurve";
-  const curveFallback = curveClass === "flash_capable" ? flashCurve : standardCurve;
-  const curve = config[curveKey] ?? curveFallback;
-  const setCurve = (updater: (current: ChargingCurvePoint[]) => ChargingCurvePoint[]) => {
-    const nextCurve = updater(curve).map((point) => ({ ...point }));
-    setConfig((current) => ({ ...current, [curveKey]: nextCurve }));
-    setState((current) => ({
+
+  const selectedVehicleModel = config.vehicleModels.find((m) => m.id === selectedVehicleModelId)
+    ?? config.vehicleModels.find((m) => m.id === DEFAULT_FLASH_MODEL_ID)
+    ?? config.vehicleModels[0];
+
+  const updateVehicleModel = (modelId: string, updater: (model: VehicleModel) => VehicleModel) => {
+    setConfig((current) => ({
       ...current,
-      vehicles: current.vehicles.map((vehicle) => vehicle.chargingClass === curveClass ? { ...vehicle, chargingCurve: nextCurve.map((point) => ({ ...point })) } : vehicle),
+      vehicleModels: current.vehicleModels.map((m) => m.id === modelId ? updater(m) : m),
     }));
+  };
+
+  const setCurve = (updater: (current: ChargingCurvePoint[]) => ChargingCurvePoint[]) => {
+    if (!selectedVehicleModel) return;
+    const nextCurve = updater(selectedVehicleModel.chargingCurve).map((point) => ({ ...point }));
+    updateVehicleModel(selectedVehicleModel.id, (m) => ({ ...m, chargingCurve: nextCurve }));
   };
   const updateCurvePower = (index: number, powerKw: number) => {
     const nextPower = Math.max(0, Math.min(1500, Math.round(powerKw / 10) * 10));
@@ -436,20 +457,75 @@ export function Dashboard() {
   };
 
   const selectScenario = (name: string) => {
-    const next = getConfigForScenario(name, scenarioPresets[name]);
+    const next = getScenarioConfigV3(name, scenarioPresets[name]);
     setConfig(next);
+    setSelectedVehicleModelId(resolveVehicleModelId(next.vehicleModels));
     setState(createInitialState(next));
     setRunning(true);
-    setToast(`已载入“${name}”场景`);
+    setToast(`已载入"${name}"场景`);
+  };
+
+  const handleCreateModel = () => {
+    if (!selectedVehicleModel) return;
+    const result = createVehicleModelHelper(newModelDraft.name, newModelDraft.chargingClass, newModelDraft.capacity);
+    if (!result.ok) { setNewModelError(result.error); return; }
+    setConfig((current) => ({ ...current, vehicleModels: [...current.vehicleModels, result.model] }));
+    setSelectedVehicleModelId(result.model.id);
+    setShowNewModel(false);
+    setNewModelError("");
+    setToast(`已创建车型"${result.model.name}"`);
+  };
+
+  const handleRenameModel = () => {
+    if (!selectedVehicleModel) return;
+    const result = renameVehicleModelHelper(config.vehicleModels, selectedVehicleModel.id, renameDraft);
+    if (!result.ok) { setRenameError(result.error); return; }
+    setConfig((current) => ({ ...current, vehicleModels: result.models }));
+    setShowRenameModel(false);
+    setRenameError("");
+    setToast("车型已重命名");
+  };
+
+  const handleChangeClass = (newClass: VehicleChargingClass) => {
+    if (!selectedVehicleModel) return;
+    if (!canChangeModelClass(config.vehicleModels, selectedVehicleModel.id, newClass)) {
+      setToast("至少需要保留一个闪充车型和一个普通车型");
+      return;
+    }
+    updateVehicleModel(selectedVehicleModel.id, (m) => changeModelClass(m, newClass));
+    setToast(`车型类别已改为${newClass === "flash_capable" ? "闪充" : "普通"}`);
+  };
+
+  const handleRestoreDefaultCurve = () => {
+    if (!selectedVehicleModel) return;
+    updateVehicleModel(selectedVehicleModel.id, (m) => restoreDefaultCurveHelper(m));
+    setToast("已恢复类别默认曲线");
+  };
+
+  const handleDeleteModel = () => {
+    if (!selectedVehicleModel) return;
+    const result = deleteVehicleModelHelper(config.vehicleModels, selectedVehicleModel.id);
+    if (!result.ok) { setToast(result.error); setShowDeleteModel(false); return; }
+    setConfig((current) => ({ ...current, vehicleModels: result.models }));
+    setSelectedVehicleModelId(resolveVehicleModelId(result.models));
+    setShowDeleteModel(false);
+    setToast(`已删除车型"${selectedVehicleModel.name}"`);
+  };
+
+  const handleUpdateCapacity = (value: number) => {
+    if (!selectedVehicleModel || !Number.isFinite(value) || value < CAPACITY_MIN_KWH || value > CAPACITY_MAX_KWH) return;
+    updateVehicleModel(selectedVehicleModel.id, (m) => ({ ...m, usableBatteryCapacityKWh: value }));
   };
 
   const addVehicle = () => {
     const quantity = Math.max(1, Math.min(30, Math.round(manual.quantity)));
+    const model = config.vehicleModels.find((m) => m.id === manualVehicleModelId) ?? config.vehicleModels[0];
+    if (!model) return;
     setState((current) => {
       let next = current;
       for (let index = 0; index < quantity; index += 1) {
         next = addManualVehicle(next, config, {
-          chargingClass: manual.chargingClass,
+          vehicleModelId: model.id,
           capacity: manual.capacity,
           maxPower: manual.maxPower,
           initialSoc: manual.initialSoc,
@@ -459,7 +535,7 @@ export function Dashboard() {
       return next;
     });
     setShowAdd(false);
-    setToast(`${quantity} 辆${manual.chargingClass === "flash_capable" ? "闪充" : "普通"}车辆已加入站点`);
+    setToast(`${quantity} 辆${model.name}已加入站点`);
   };
 
   const exportScenario = () => download("兆瓦闪充站场景.json", JSON.stringify(config, null, 2), "application/json");
@@ -472,11 +548,15 @@ export function Dashboard() {
   const importScenario = async (file?: File) => {
     if (!file) return;
     try {
-      const parsed = JSON.parse(await file.text()) as Partial<SimulationConfig>;
-      if (parsed.schemaVersion !== 2 || typeof parsed.gridMaxPowerKw !== "number" || typeof parsed.flashShare !== "number" || parsed.flashShare < 0 || parsed.flashShare > 1) throw new Error("场景版本或关键数值不合法");
-      const next = { ...baseConfig, ...parsed } as SimulationConfig;
-      setConfig(next);
-      reset(next);
+      const parsed = JSON.parse(await file.text());
+      const result = parseSimulationConfig(parsed);
+      if (!result.ok) {
+        setToast(`导入失败：${result.error}`);
+        return;
+      }
+      setConfig(result.config);
+      setSelectedVehicleModelId(resolveVehicleModelId(result.config.vehicleModels));
+      reset(result.config);
       setToast("场景导入成功");
     } catch (error) {
       setToast(`导入失败：${error instanceof Error ? error.message : "文件格式错误"}`);
@@ -492,7 +572,7 @@ export function Dashboard() {
     if (state.gridControl.mode === "limited") return `电网正在执行 ${effectiveGridLimit}kW 临时功率上限，储能会在能力范围内补足车辆充电需求。`;
     if (!connectorB.currentVehicleId && standardWaiting > 0 && flashWaiting === 0) return `虽然 B 专用枪当前空闲，但队列中的 ${standardWaiting} 辆车均为普通车辆，只能等待 A 通用枪。`;
     const aVehicle = state.vehicles.find((vehicle) => vehicle.id === connectorA.currentVehicleId);
-    if (aVehicle?.chargingClass === "flash_capable" && standardWaiting > 0) return `A 通用枪正由闪充车辆使用，${standardWaiting} 辆普通车辆无法使用 B 枪；可切换“通用枪普通车优先”。`;
+    if (aVehicle?.chargingClass === "flash_capable" && standardWaiting > 0) return `A 通用枪正由闪充车辆使用，${standardWaiting} 辆普通车辆无法使用 B 枪；可切换"通用枪普通车优先"。`;
     if (connectorA.requestedPowerKw + connectorB.requestedPowerKw > config.pileAggregateMaxPowerKw) return `双枪合计请求 ${Math.round(connectorA.requestedPowerKw + connectorB.requestedPowerKw)}kW，受到每桩 ${config.pileAggregateMaxPowerKw}kW 上限限制。`;
     return "角色感知调度正常：B 枪优先匹配闪充车，A 枪服务剩余最早兼容车辆。";
   })();
@@ -549,7 +629,7 @@ export function Dashboard() {
                 <ParameterRow label="平均到达率" value={config.arrivalRatePerHour} min={0} max={60} step={1} unit="辆/h" onChange={(value) => updateConfig("arrivalRatePerHour", value)} />
                 <ParameterRow label="闪充车辆占比" value={Math.round(config.flashShare * 100)} min={0} max={100} step={5} unit="%" onChange={(value) => updateConfig("flashShare", value / 100)} />
               </div>
-              <button className="wide-button" onClick={() => setShowAdd(true)}>手动添加车辆</button>
+              <button className="wide-button" onClick={() => { const modelId = resolveVehicleModelId(config.vehicleModels, selectedVehicleModelId); setManualVehicleModelId(modelId); const model = config.vehicleModels.find((m) => m.id === modelId); if (model) setManual((v) => ({ ...v, capacity: model.usableBatteryCapacityKWh, maxPower: model.chargingClass === "flash_capable" ? 1500 : 520 })); setShowAdd(true); }}>手动添加车辆</button>
             </div>
 
             <div className={`control-group grid-disturbance ${state.gridControl.mode}`}>
@@ -669,20 +749,45 @@ export function Dashboard() {
 
         <section className="data-panel panel">
           <nav className="tabs" aria-label="数据视图">{tabs.map(({ name, kind }) => <button className={`${tab === name ? "active " : ""}tab-${kind}`} key={name} onClick={() => setTab(name)}>{name}{name === "事件" && state.events.length > 0 && <span>{Math.min(99, state.events.length)}</span>}</button>)}{tab === "车辆" && <button className="export-csv" onClick={exportCsv}>导出车辆 CSV</button>}</nav>
-          {tab === "车辆" && <div className="tab-content table-wrap"><table><thead><tr><th>车辆</th><th>类别</th><th>状态</th><th className="table-number">SOC</th><th className="table-number">功率</th><th className="table-number">等待用时</th><th className="table-number">充电用时</th><th className="table-number">预计剩余</th><th>枪口</th><th>限功率原因</th></tr></thead><tbody>{state.vehicles.slice(-50).reverse().map((vehicle) => { const remaining = vehicle.status === "queued" ? estimateVehicleWaitTime(vehicle.id, state, config).expectedWaitSec : ["moving_to_bay", "connecting", "charging"].includes(vehicle.status) ? estimateRemainingChargeTime(vehicle) : 0; const remainingLabel = vehicle.status === "queued" ? `等待 ${formatDuration(remaining)}` : ["moving_to_bay", "connecting", "charging"].includes(vehicle.status) ? `充电 ${formatDuration(remaining)}` : "—"; const visibleLimitReasons = vehicle.limitReasons.filter((reason) => reason !== "none"); return <tr key={vehicle.id} onClick={() => setSelectedVehicle(vehicle)}><td><strong>{vehicle.id}</strong></td><td>{vehicle.chargingClass === "flash_capable" ? "闪充兼容" : "普通直流"}</td><td><span className={`table-status ${vehicle.status}`}>{statusNames[vehicle.status]}</span></td><td className="table-number">{vehicle.currentSocPercent.toFixed(1)}% → {vehicle.targetSocPercent}%</td><td className="table-number table-power"><span>{Math.round(vehicle.actualPowerKw).toLocaleString("zh-CN")}</span><small>kW</small></td><td className="table-number">{formatDuration(vehicleWaitDuration(vehicle, state.timeSec))}</td><td className="table-number">{vehicle.chargingStartedAtSec === undefined ? "—" : formatDuration(vehicleChargeDuration(vehicle, state.timeSec))}</td><td className="table-number"><span className="remaining-cell">{remainingLabel}</span></td><td>{vehicle.assignedConnectorId ?? "—"}</td><td>{visibleLimitReasons.length ? visibleLimitReasons.join(" / ") : "—"}</td></tr>; })}</tbody></table></div>}
+          {tab === "车辆" && <div className="tab-content table-wrap"><table><thead><tr><th>车辆</th><th>车型</th><th>状态</th><th className="table-number">SOC</th><th className="table-number">功率</th><th className="table-number">等待用时</th><th className="table-number">充电用时</th><th className="table-number">预计剩余</th><th>枪口</th><th>限功率原因</th></tr></thead><tbody>{state.vehicles.slice(-50).reverse().map((vehicle) => { const remaining = vehicle.status === "queued" ? estimateVehicleWaitTime(vehicle.id, state, config).expectedWaitSec : ["moving_to_bay", "connecting", "charging"].includes(vehicle.status) ? estimateRemainingChargeTime(vehicle) : 0; const remainingLabel = vehicle.status === "queued" ? `等待 ${formatDuration(remaining)}` : ["moving_to_bay", "connecting", "charging"].includes(vehicle.status) ? `充电 ${formatDuration(remaining)}` : "—"; const visibleLimitReasons = vehicle.limitReasons.filter((reason) => reason !== "none"); return <tr key={vehicle.id} onClick={() => setSelectedVehicle(vehicle)}><td><strong>{vehicle.id}</strong></td><td className="vehicle-model-cell" title={vehicle.name}><span className="vehicle-model-name">{vehicle.name}</span><small>{vehicle.chargingClass === "flash_capable" ? "闪充" : "普通"}</small></td><td><span className={`table-status ${vehicle.status}`}>{statusNames[vehicle.status]}</span></td><td className="table-number">{vehicle.currentSocPercent.toFixed(1)}% → {vehicle.targetSocPercent}%</td><td className="table-number table-power"><span>{Math.round(vehicle.actualPowerKw).toLocaleString("zh-CN")}</span><small>kW</small></td><td className="table-number">{formatDuration(vehicleWaitDuration(vehicle, state.timeSec))}</td><td className="table-number">{vehicle.chargingStartedAtSec === undefined ? "—" : formatDuration(vehicleChargeDuration(vehicle, state.timeSec))}</td><td className="table-number"><span className="remaining-cell">{remainingLabel}</span></td><td>{vehicle.assignedConnectorId ?? "—"}</td><td>{visibleLimitReasons.length ? visibleLimitReasons.join(" / ") : "—"}</td></tr>; })}</tbody></table></div>}
           {tab === "事件" && <div className="tab-content event-list">{state.events.map((event) => <article key={event.id} className={event.level}><time>T+{formatTime(event.timeSec)}</time><span>{event.message}</span><small title={event.type}>{event.level === "warning" && <b>警告 · </b>}{event.type}</small></article>)}{state.events.length === 0 && <p className="empty-state">仿真事件将在这里记录。</p>}</div>}
           {tab === "运营结果" && <div className="tab-content analytics-grid"><section className="analytics-group"><h3>吞吐结果</h3><MetricCard label="累计到站" value={`${state.totalArrivals} 辆`} note="包含手动与自动车辆" /><MetricCard label="完成率" value={`${state.totalArrivals ? (completedVehicles.length / state.totalArrivals * 100).toFixed(1) : 0}%`} note="当前仿真窗口" /></section><section className="analytics-group"><h3>枪口分工</h3><MetricCard label="A 服务闪充 / 普通" value={`${connectorA.servedFlash} / ${connectorA.servedStandard}`} note="按实际会话统计" /><MetricCard label="B 服务闪充" value={`${connectorB.servedFlash} 辆`} note="普通车辆始终为 0" /><MetricCard label="双枪同时工作" value={`${state.timeSec ? (pile.simultaneousSec / state.timeSec * 100).toFixed(1) : "0.0"}%`} note="整桩时间占比" /></section><section className="analytics-group"><h3>约束损失</h3><MetricCard label="整桩共享上限受限时间" value={`${state.timeSec ? (pile.aggregateLimitedSec / state.timeSec * 100).toFixed(1) : "0.0"}%`} note={`当前上限 ${config.pileAggregateMaxPowerKw.toLocaleString("zh-CN")} kW · ${formatDuration(pile.aggregateLimitedSec)}`} /><MetricCard label="受限减少电量" value={`${pile.curtailedEnergyKWh.toFixed(2)} kWh`} note="相对枪口请求估算" /></section><section className="analytics-group"><h3>储能贡献</h3><MetricCard label="储能累计放电" value={`${state.storage.cumulativeDischargeKWh.toFixed(1)} kWh`} note={`等效循环 ${(state.storage.cumulativeDischargeKWh / state.storage.capacityKWh).toFixed(3)}`} /></section></div>}
-          {tab === "模型 · 充电曲线" && <div className="tab-content curve-editor"><div className="curve-head"><div><h3>{curveClass === "flash_capable" ? "闪充车" : "普通车"}充电功率曲线</h3><p>模型输入，修改会立即作用于仿真中的同类车辆。点击并上下拖动柱体即可调节功率；普通车默认峰值能力为 520kW。</p></div><div className="curve-switch" role="group" aria-label="选择充电曲线车型"><button className={curveClass === "flash_capable" ? "active" : ""} onClick={() => setCurveClass("flash_capable")}>闪充车</button><button className={curveClass === "standard_dc" ? "active" : ""} onClick={() => setCurveClass("standard_dc")}>普通车 · 520kW</button></div><button title="立即恢复当前车型的默认控制点" onClick={() => setCurve(() => (curveClass === "flash_capable" ? flashCurve : standardCurve).map((point) => ({ ...point })))}>恢复当前车型默认曲线</button></div><div className="curve-bars" aria-label={`${curveClass === "flash_capable" ? "闪充车" : "普通车"}可拖动充电曲线`}>{curve.map((point, index) => <button type="button" className={`curve-bar ${curveClass === "standard_dc" ? "standard" : ""}`} key={`${curveClass}-${point.soc}-${index}`} style={{ height: `${Math.max(2, point.powerKw / 1500 * 100)}%` }} role="slider" aria-label={`SOC ${point.soc}% 功率 ${point.powerKw}kW`} aria-valuemin={0} aria-valuemax={1500} aria-valuenow={point.powerKw} onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); updateCurveFromPointer(index, event); }} onPointerMove={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) updateCurveFromPointer(index, event); }} onKeyDown={(event) => { if (event.key === "ArrowUp" || event.key === "ArrowDown") { event.preventDefault(); updateCurvePower(index, point.powerKw + (event.key === "ArrowUp" ? 10 : -10)); } }}><span>{point.powerKw}</span><i>⇅</i><small>{point.soc}%</small></button>)}</div><div className="curve-table">{curve.map((point, index) => <label key={`${curveClass}-${point.soc}-${index}`}><span>SOC <input type="number" min="0" max="100" value={point.soc} onChange={(event) => setCurve((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, soc: Number(event.target.value) } : item).sort((a, b) => a.soc - b.soc))} />%</span><span>功率 <input type="number" min="0" max="1500" value={point.powerKw} onChange={(event) => updateCurvePower(index, Number(event.target.value))} />kW</span><button aria-label={`删除 SOC ${point.soc}% 控制点`} onClick={() => setCurve((current) => current.filter((_, itemIndex) => itemIndex !== index))}>×</button></label>)}<button onClick={() => setCurve((current) => [...current, { soc: 50, powerKw: curveClass === "flash_capable" ? 900 : 400 }].sort((a, b) => a.soc - b.soc))}>＋ 增加控制点</button></div></div>}
+          {tab === "模型 · 车型与曲线" && selectedVehicleModel && <div className="tab-content curve-editor">
+            <div className="curve-head">
+              <div className="model-toolbar">
+                <label className="model-select-row">
+                  <span>车型</span>
+                  <select value={selectedVehicleModel.id} onChange={(event) => setSelectedVehicleModelId(event.target.value)}>{config.vehicleModels.map((m) => <option key={m.id} value={m.id}>{m.name} · {m.chargingClass === "flash_capable" ? "闪充" : "普通"}</option>)}</select>
+                </label>
+                <div className="model-actions-row">
+                  <button className="model-tool-btn" onClick={() => { setNewModelDraft({ name: "", chargingClass: "flash_capable", capacity: DEFAULT_FLASH_CAPACITY_KWH }); setNewModelError(""); setShowNewModel(true); }}>新建</button>
+                  <button className="model-tool-btn" onClick={() => { setRenameDraft(selectedVehicleModel.name); setRenameError(""); setShowRenameModel(true); }}>重命名</button>
+                  {!isDefaultVehicleModel(selectedVehicleModel) && <button className="model-tool-btn danger-btn" onClick={() => setShowDeleteModel(true)}>删除</button>}
+                </div>
+                <div className="model-props-row">
+                  <label><span>类别</span><select value={selectedVehicleModel.chargingClass} onChange={(event) => handleChangeClass(event.target.value as VehicleChargingClass)}><option value="flash_capable">闪充车型</option><option value="standard_dc">普通车型</option></select></label>
+                  <label><span>容量</span><input type="number" min={CAPACITY_MIN_KWH} max={CAPACITY_MAX_KWH} step={1} value={selectedVehicleModel.usableBatteryCapacityKWh} onChange={(event) => handleUpdateCapacity(Number(event.target.value))} /><small>kWh</small></label>
+                  <button className="model-tool-btn restore-btn" onClick={handleRestoreDefaultCurve}>恢复默认曲线</button>
+                </div>
+              </div>
+              <p>模型输入，修改仅影响之后生成的车辆。点击并上下拖动柱体即可调节功率。</p>
+            </div>
+            <div className="curve-bars" aria-label={`${selectedVehicleModel.name} 可拖动充电曲线`}>{selectedVehicleModel.chargingCurve.map((point, index) => <button type="button" className={`curve-bar ${selectedVehicleModel.chargingClass === "standard_dc" ? "standard" : ""}`} key={`${selectedVehicleModel.id}-${point.soc}-${index}`} style={{ height: `${Math.max(2, point.powerKw / 1500 * 100)}%` }} role="slider" aria-label={`SOC ${point.soc}% 功率 ${point.powerKw}kW`} aria-valuemin={0} aria-valuemax={1500} aria-valuenow={point.powerKw} onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); updateCurveFromPointer(index, event); }} onPointerMove={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) updateCurveFromPointer(index, event); }} onKeyDown={(event) => { if (event.key === "ArrowUp" || event.key === "ArrowDown") { event.preventDefault(); updateCurvePower(index, point.powerKw + (event.key === "ArrowUp" ? 10 : -10)); } }}><span>{point.powerKw}</span><i>⇅</i><small>{point.soc}%</small></button>)}</div>
+            <div className="curve-table">{selectedVehicleModel.chargingCurve.map((point, index) => <label key={`${selectedVehicleModel.id}-${point.soc}-${index}`}><span>SOC <input type="number" min="0" max="100" value={point.soc} onChange={(event) => setCurve((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, soc: Number(event.target.value) } : item).sort((a, b) => a.soc - b.soc))} />%</span><span>功率 <input type="number" min="0" max="1500" value={point.powerKw} onChange={(event) => updateCurvePower(index, Number(event.target.value))} />kW</span><button aria-label={`删除 SOC ${point.soc}% 控制点`} onClick={() => setCurve((current) => current.filter((_, itemIndex) => itemIndex !== index))}>×</button></label>)}<button onClick={() => setCurve((current) => [...current, { soc: 50, powerKw: selectedVehicleModel.chargingClass === "flash_capable" ? 900 : 400 }].sort((a, b) => a.soc - b.soc))}>＋ 增加控制点</button></div>
+          </div>}
           {tab === "参考 · 参数来源" && <div className="tab-content sources"><div className="source-intro"><h3>公开参数与模型假设分离</h3><p>{sourceNote}。所有分配算法与换车时长均作为研究模型，不声称拥有厂商完整 BMS 或站控策略。</p></div><table><thead><tr><th>参数</th><th>默认值</th><th>来源分类</th><th>可信度 / 说明</th></tr></thead><tbody><tr><td>单枪最大功率</td><td>1500kW</td><td><span className="source-tag official">官方公开参数</span></td><td>设备能力上限，非持续承诺</td></tr><tr><td>整桩双枪合计</td><td>2100kW</td><td><span className="source-tag media">公开媒体报道</span></td><td>可修改的共享硬上限</td></tr><tr><td>A 枪面向兼容车辆</td><td>true</td><td><span className="source-tag case">公开站点案例</span></td><td>通用角色</td></tr><tr><td>B 枪闪充专用</td><td>true</td><td><span className="source-tag case">企业公开回复</span></td><td>严格专用模式</td></tr><tr><td>车位换车周转</td><td>{config.turnoverSec ?? 60} 秒</td><td><span className="source-tag model">模型默认假设</span></td><td>包含驶离、确认与下一车进位准备</td></tr><tr><td>闪充专枪优先算法</td><td>{policyNames[config.pilePolicy]}</td><td><span className="source-tag model">模型默认假设</span></td><td>不代表厂商控制算法</td></tr><tr><td>A 枪 480kW</td><td>可选策略上限</td><td><span className="source-tag case">特定落地案例</span></td><td>不修改硬件铭牌上限</td></tr></tbody></table></div>}
         </section>
       </main>
 
       <footer className="app-footer"><span>模型单位：功率 kW · 能量 kWh · 时间 s · SOC 0–100</span><span>随机种子 {config.randomSeed} · schema v{config.schemaVersion}</span><span>能量流符号：电网输入为正，储能放电为正 / 充电为负</span></footer>
 
-      {showAdd && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowAdd(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="add-title" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" onClick={() => setShowAdd(false)}>×</button><span>MANUAL ARRIVAL</span><h2 id="add-title">手动添加车辆</h2><div className="vehicle-type-picker"><button className={manual.chargingClass === "flash_capable" ? "active" : ""} onClick={() => setManual((value) => ({ ...value, chargingClass: "flash_capable", maxPower: 1500, capacity: 112 }))}><strong>闪充兼容车辆</strong><small>可使用 A 通用枪和 B 闪充专用枪</small></button><button className={manual.chargingClass === "standard_dc" ? "active" : ""} onClick={() => setManual((value) => ({ ...value, chargingClass: "standard_dc", maxPower: 520, capacity: 76 }))}><strong>普通直流快充车辆</strong><small>默认峰值 520kW，仅可使用 A 通用枪</small></button></div><div className="form-grid"><label>添加数量（辆）<input type="number" min="1" max="30" value={manual.quantity} onChange={(event) => setManual((value) => ({ ...value, quantity: Math.max(1, Math.min(30, Number(event.target.value) || 1)) }))} /></label><label>电池容量 kWh<input type="number" value={manual.capacity} onChange={(event) => setManual((value) => ({ ...value, capacity: Number(event.target.value) }))} /></label><label>峰值功率 kW<input type="number" value={manual.maxPower} onChange={(event) => setManual((value) => ({ ...value, maxPower: Number(event.target.value) }))} /></label><label>初始 SOC %<input type="number" min="0" max="95" value={manual.initialSoc} onChange={(event) => setManual((value) => ({ ...value, initialSoc: Number(event.target.value) }))} /></label><label>目标 SOC %<input type="number" min="1" max="100" value={manual.targetSoc} onChange={(event) => setManual((value) => ({ ...value, targetSoc: Number(event.target.value) }))} /></label></div><p className="assumption">批量车辆会按相同参数依次到达；前两辆可立即分配到兼容空闲枪口，其余进入全局队列。</p><button className="primary-action modal-submit" onClick={addVehicle}>添加 {Math.max(1, Math.min(30, Math.round(manual.quantity)))} 辆并参与调度</button></section></div>}
-      {selectedLiveVehicle && <aside className="vehicle-drawer" role="dialog" aria-modal="true" aria-label={`${selectedLiveVehicle.id} 车辆详情`}><button className="modal-close" onClick={() => setSelectedVehicle(null)}>×</button><span>VEHICLE SESSION</span><h2>{selectedLiveVehicle.id}</h2><p className="drawer-subtitle">{selectedLiveVehicle.name} · {selectedLiveVehicle.chargingClass === "flash_capable" ? "闪充兼容" : "普通直流"}</p><div className="drawer-soc"><div><span>当前 SOC</span><strong>{selectedLiveVehicle.currentSocPercent.toFixed(1)}%</strong></div><i><em style={{ width: `${selectedLiveVehicle.currentSocPercent}%` }} /></i><small>初始 {selectedLiveVehicle.initialSocPercent}% · 目标 {selectedLiveVehicle.targetSocPercent}%</small></div><dl><div><dt>当前状态</dt><dd>{statusNames[selectedLiveVehicle.status]}</dd></div><div><dt>当前 / 请求功率</dt><dd>{Math.round(selectedLiveVehicle.actualPowerKw)} / {Math.round(selectedLiveVehicle.requestedPowerKw)} kW</dd></div><div><dt>可用枪口</dt><dd>{selectedLiveVehicle.chargingClass === "flash_capable" ? "A 通用、B 专用" : "仅 A 通用"}</dd></div><div><dt>当前分配</dt><dd>{selectedLiveVehicle.assignedConnectorId ?? "尚未分配"}</dd></div><div><dt>已充入电量</dt><dd>{selectedLiveVehicle.deliveredEnergyKWh.toFixed(2)} kWh</dd></div><div><dt>等待用时</dt><dd>{formatDuration(vehicleWaitDuration(selectedLiveVehicle, state.timeSec))}</dd></div><div><dt>充电用时</dt><dd>{selectedLiveVehicle.chargingStartedAtSec === undefined ? "—" : formatDuration(vehicleChargeDuration(selectedLiveVehicle, state.timeSec))}</dd></div><div><dt>预计剩余等待</dt><dd>{selectedLiveVehicle.status === "queued" && selectedEstimate ? formatDuration(selectedEstimate.expectedWaitSec) : "—"}</dd></div><div><dt>预计剩余充电</dt><dd>{selectedRemainingCharge > 0 ? formatDuration(selectedRemainingCharge) : "—"}</dd></div><div><dt>电池温度 / 健康度</dt><dd>{selectedLiveVehicle.batteryTemperatureC}°C / {selectedLiveVehicle.batteryHealthPercent}%</dd></div><div><dt>限功率原因</dt><dd>{selectedLiveVehicle.limitReasons.join("、")}</dd></div></dl>{selectedLiveVehicle.status === "queued" && selectedEstimate && <div className="estimate-box">{selectedEstimate.explanation.map((line) => <p key={line}>{line}</p>)}</div>}<h3>车辆时间线</h3><ol className="timeline">{selectedLiveVehicle.timeline.slice().reverse().map((item, index) => <li key={`${item.timeSec}-${index}`}><time>T+{formatTime(item.timeSec)}</time><strong>{statusNames[item.status]}</strong><span>{item.note}</span></li>)}</ol></aside>}
-      {showHelp && <div className="modal-backdrop" onMouseDown={() => setShowHelp(false)}><section className="modal help-modal" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" onClick={() => setShowHelp(false)}>×</button><span>QUICK GUIDE</span><h2>如何读懂这个站</h2><ol><li><strong>先看首屏曲线：</strong>左侧比较电网、储能与车辆功率，右侧查看储能电量和安全下限。</li><li><strong>模拟电网异常：</strong>在“电网与母线”中可断电、临时限功率或恢复供电；断电时由储能尽力支撑。</li><li><strong>手动调储能：</strong>拖动当前电量滑杆，或使用 20%、50%、80%、100% 快捷按钮。</li><li><strong>调整采样：</strong>点击右上角“采样 5s”按钮，在 1、5、10、30、60 秒间循环。</li><li><strong>读车旁倒计时：</strong>充电区显示预计剩余充电，等候区显示预计剩余等待。</li><li><strong>查看诊断：</strong>页面会解释电网异常、等待变长和功率降低的具体原因。</li></ol><p className="assumption">本工具用于技术演示与方案研究，不代表任何厂商官方控制策略。</p></section></div>}
+      {showAdd && (() => { const manualModel = config.vehicleModels.find((m) => m.id === manualVehicleModelId) ?? config.vehicleModels[0]; const handleModelSwitch = (modelId: string) => { setManualVehicleModelId(modelId); const m = config.vehicleModels.find((x) => x.id === modelId); if (m) setManual((v) => ({ ...v, capacity: m.usableBatteryCapacityKWh, maxPower: m.chargingClass === "flash_capable" ? 1500 : 520 })); }; return <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowAdd(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="add-title" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" onClick={() => setShowAdd(false)}>×</button><span>MANUAL ARRIVAL</span><h2 id="add-title">手动添加车辆</h2><label className="manual-model-select"><span>车型</span><select value={manualVehicleModelId} onChange={(event) => handleModelSwitch(event.target.value)}>{config.vehicleModels.map((m) => <option key={m.id} value={m.id}>{m.name} · {m.chargingClass === "flash_capable" ? "闪充" : "普通"}</option>)}</select></label><div className="form-grid"><label>添加数量（辆）<input type="number" min="1" max="30" value={manual.quantity} onChange={(event) => setManual((value) => ({ ...value, quantity: Math.max(1, Math.min(30, Number(event.target.value) || 1)) }))} /></label><label>本次电池容量<input type="number" value={manual.capacity} onChange={(event) => setManual((value) => ({ ...value, capacity: Number(event.target.value) }))} /><small>默认取自车型，仅影响本次</small></label><label>本次峰值功率<input type="number" value={manual.maxPower} onChange={(event) => setManual((value) => ({ ...value, maxPower: Number(event.target.value) }))} /><small>kW · 仅影响本次</small></label><label>初始 SOC %<input type="number" min="0" max="95" value={manual.initialSoc} onChange={(event) => setManual((value) => ({ ...value, initialSoc: Number(event.target.value) }))} /></label><label>目标 SOC %<input type="number" min="1" max="100" value={manual.targetSoc} onChange={(event) => setManual((value) => ({ ...value, targetSoc: Number(event.target.value) }))} /></label></div><p className="assumption">批量车辆按相同参数到达；本次容量和峰值功率仅覆盖本次添加，不修改车型配置。</p><button className="primary-action modal-submit" onClick={addVehicle}>添加 {Math.max(1, Math.min(30, Math.round(manual.quantity)))} 辆{manualModel?.name ?? ""}并参与调度</button></section></div>; })()}
+      {selectedLiveVehicle && <aside className="vehicle-drawer" role="dialog" aria-modal="true" aria-label={`${selectedLiveVehicle.id} 车辆详情`}><button className="modal-close" onClick={() => setSelectedVehicle(null)}>×</button><span>VEHICLE SESSION</span><h2>{selectedLiveVehicle.id}</h2><p className="drawer-subtitle">{selectedLiveVehicle.name} · {selectedLiveVehicle.chargingClass === "flash_capable" ? "闪充车型" : "普通车型"}</p><div className="drawer-soc"><div><span>当前 SOC</span><strong>{selectedLiveVehicle.currentSocPercent.toFixed(1)}%</strong></div><i><em style={{ width: `${selectedLiveVehicle.currentSocPercent}%` }} /></i><small>初始 {selectedLiveVehicle.initialSocPercent}% · 目标 {selectedLiveVehicle.targetSocPercent}%</small></div><dl><div><dt>车型</dt><dd>{selectedLiveVehicle.name}</dd></div><div><dt>类别</dt><dd>{selectedLiveVehicle.chargingClass === "flash_capable" ? "闪充车型" : "普通车型"}</dd></div><div><dt>电池容量</dt><dd>{selectedLiveVehicle.usableBatteryCapacityKWh} kWh</dd></div><div><dt>当前状态</dt><dd>{statusNames[selectedLiveVehicle.status]}</dd></div><div><dt>当前 / 请求功率</dt><dd>{Math.round(selectedLiveVehicle.actualPowerKw)} / {Math.round(selectedLiveVehicle.requestedPowerKw)} kW</dd></div><div><dt>可用枪口</dt><dd>{selectedLiveVehicle.chargingClass === "flash_capable" ? "A 通用、B 专用" : "仅 A 通用"}</dd></div><div><dt>当前分配</dt><dd>{selectedLiveVehicle.assignedConnectorId ?? "尚未分配"}</dd></div><div><dt>已充入电量</dt><dd>{selectedLiveVehicle.deliveredEnergyKWh.toFixed(2)} kWh</dd></div><div><dt>等待用时</dt><dd>{formatDuration(vehicleWaitDuration(selectedLiveVehicle, state.timeSec))}</dd></div><div><dt>充电用时</dt><dd>{selectedLiveVehicle.chargingStartedAtSec === undefined ? "—" : formatDuration(vehicleChargeDuration(selectedLiveVehicle, state.timeSec))}</dd></div><div><dt>预计剩余等待</dt><dd>{selectedLiveVehicle.status === "queued" && selectedEstimate ? formatDuration(selectedEstimate.expectedWaitSec) : "—"}</dd></div><div><dt>预计剩余充电</dt><dd>{selectedRemainingCharge > 0 ? formatDuration(selectedRemainingCharge) : "—"}</dd></div><div><dt>电池温度 / 健康度</dt><dd>{selectedLiveVehicle.batteryTemperatureC}°C / {selectedLiveVehicle.batteryHealthPercent}%</dd></div><div><dt>限功率原因</dt><dd>{selectedLiveVehicle.limitReasons.join("、")}</dd></div></dl>{selectedLiveVehicle.status === "queued" && selectedEstimate && <div className="estimate-box">{selectedEstimate.explanation.map((line) => <p key={line}>{line}</p>)}</div>}<h3>车辆时间线</h3><ol className="timeline">{selectedLiveVehicle.timeline.slice().reverse().map((item, index) => <li key={`${item.timeSec}-${index}`}><time>T+{formatTime(item.timeSec)}</time><strong>{statusNames[item.status]}</strong><span>{item.note}</span></li>)}</ol></aside>}
+      {showHelp && <div className="modal-backdrop" onMouseDown={() => setShowHelp(false)}><section className="modal help-modal" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" onClick={() => setShowHelp(false)}>×</button><span>QUICK GUIDE</span><h2>如何读懂这个站</h2><ol><li><strong>先看首屏曲线：</strong>左侧比较电网、储能与车辆功率，右侧查看储能电量和安全下限。</li><li><strong>模拟电网异常：</strong>在"电网与母线"中可断电、临时限功率或恢复供电；断电时由储能尽力支撑。</li><li><strong>手动调储能：</strong>拖动当前电量滑杆，或使用 20%、50%、80%、100% 快捷按钮。</li><li><strong>调整采样：</strong>点击右上角"采样 5s"按钮，在 1、5、10、30、60 秒间循环。</li><li><strong>读车旁倒计时：</strong>充电区显示预计剩余充电，等候区显示预计剩余等待。</li><li><strong>查看诊断：</strong>页面会解释电网异常、等待变长和功率降低的具体原因。</li></ol><p className="assumption">本工具用于技术演示与方案研究，不代表任何厂商官方控制策略。</p></section></div>}
       {showReset && <div className="modal-backdrop"><section className="modal confirm-modal" role="alertdialog" aria-modal="true"><span>RESET SCENARIO</span><h2>确认重置为空站？</h2><p>所有车辆、队列、事件和运行指标将清空，仿真自动暂停；当前参数与固定随机种子保留。</p><div className="confirm-actions"><button onClick={() => setShowReset(false)}>取消</button><button className="danger-button" onClick={() => reset()}>清空车辆并暂停</button></div></section></div>}
+      {showNewModel && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowNewModel(false)}><section className="modal model-modal" role="dialog" aria-modal="true" aria-labelledby="new-model-title" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" onClick={() => setShowNewModel(false)}>×</button><span>NEW VEHICLE MODEL</span><h2 id="new-model-title">新建车型</h2><div className="form-grid"><label>车型名称<input type="text" maxLength={40} value={newModelDraft.name} onChange={(event) => { setNewModelDraft((v) => ({ ...v, name: event.target.value })); setNewModelError(""); }} placeholder="例如：干线闪充 600" autoFocus /></label><label>车型类别<select value={newModelDraft.chargingClass} onChange={(event) => { const cls = event.target.value as VehicleChargingClass; setNewModelDraft((v) => ({ ...v, chargingClass: cls, capacity: cls === "flash_capable" ? DEFAULT_FLASH_CAPACITY_KWH : DEFAULT_STANDARD_CAPACITY_KWH })); }}><option value="flash_capable">闪充车型</option><option value="standard_dc">普通车型</option></select></label><label>电池容量<input type="number" min={CAPACITY_MIN_KWH} max={CAPACITY_MAX_KWH} step={1} value={newModelDraft.capacity} onChange={(event) => setNewModelDraft((v) => ({ ...v, capacity: Number(event.target.value) }))} /><small>kWh</small></label></div>{newModelError && <p className="field-error">{newModelError}</p>}<p className="assumption">创建后可继续调整充电曲线。</p><div className="confirm-actions"><button onClick={() => setShowNewModel(false)}>取消</button><button className="primary-action" onClick={handleCreateModel}>创建车型</button></div></section></div>}
+      {showRenameModel && selectedVehicleModel && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowRenameModel(false)}><section className="modal model-modal" role="dialog" aria-modal="true" aria-labelledby="rename-model-title" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" onClick={() => setShowRenameModel(false)}>×</button><span>RENAME MODEL</span><h2 id="rename-model-title">重命名车型</h2><div className="form-grid"><label>车型名称<input type="text" maxLength={40} value={renameDraft} onChange={(event) => { setRenameDraft(event.target.value); setRenameError(""); }} onKeyDown={(event) => { if (event.key === "Enter") handleRenameModel(); if (event.key === "Escape") setShowRenameModel(false); }} autoFocus /></label></div>{renameError && <p className="field-error">{renameError}</p>}<div className="confirm-actions"><button onClick={() => setShowRenameModel(false)}>取消</button><button className="primary-action" onClick={handleRenameModel}>保存</button></div></section></div>}
+      {showDeleteModel && selectedVehicleModel && !isDefaultVehicleModel(selectedVehicleModel) && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowDeleteModel(false)}><section className="modal confirm-modal" role="alertdialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" onClick={() => setShowDeleteModel(false)}>×</button><span>DELETE MODEL</span><h2>删除车型</h2><p>确定删除"{selectedVehicleModel.name}"吗？</p><p className="assumption">已生成的车辆不会受到影响。删除后将无法再自动生成或手动添加该车型。</p><div className="confirm-actions"><button onClick={() => setShowDeleteModel(false)}>取消</button><button className="danger-button" onClick={handleDeleteModel}>删除车型</button></div></section></div>}
       {toast && <div className="toast" role="status">{toast}</div>}
     </div>
   );

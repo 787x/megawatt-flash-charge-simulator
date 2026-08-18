@@ -45,6 +45,8 @@ next-env.d.ts
 # 忽略整个文件夹
 .codex/
 .openai/
+.claude/
+.vscode/
 
 # 忽略指定文件
 .env
