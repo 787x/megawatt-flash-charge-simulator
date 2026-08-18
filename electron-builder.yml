@@ -1,0 +1,28 @@
+appId: com.megawatt.flashcharge.simulator
+productName: 兆瓦闪充站仿真
+copyright: Copyright © 2026
+
+directories:
+  app: electron
+  output: release
+
+asar: true
+
+files:
+  - main.cjs
+  - package.json
+
+extraResources:
+  - from: dist-static
+    to: web
+    filter:
+      - "**/*"
+
+win:
+  target:
+    - target: portable
+      arch:
+        - x64
+
+portable:
+  artifactName: "兆瓦闪充站仿真-${version}.${ext}"

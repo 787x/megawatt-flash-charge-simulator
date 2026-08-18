@@ -8,6 +8,9 @@
   "scripts": {
     "dev": "vinext dev",
     "build": "vinext build",
+    "build:static": "vite build --config vite.static.config.ts",
+    "electron:dev": "npm run build:static && electron ./electron",
+    "build:exe": "npm run build:static && electron-builder --config electron-builder.yml --win portable --x64",
     "start": "vinext start",
     "test": "tsc -p tsconfig.test.json && node --test --test-isolation=none work/test-dist/engine.test.js work/test-dist/vehicle-models.test.js work/test-dist/config-persistence.test.js",
     "test:e2e": "node --test --test-isolation=none tests/rendered-html.test.mjs",
@@ -30,6 +33,8 @@
     "@vitejs/plugin-react": "6.0.2",
     "@vitejs/plugin-rsc": "0.5.26",
     "drizzle-kit": "0.31.10",
+    "electron": "^43.4.0",
+    "electron-builder": "^26.15.3",
     "eslint": "9.39.4",
     "eslint-config-next": "16.2.6",
     "react-server-dom-webpack": "19.2.6",
