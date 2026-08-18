@@ -172,14 +172,21 @@ function ConnectorBay({ connector, state, config, onVehicle }: { connector: Conn
         <div className="primary-reading"><span>实际功率</span><strong>{Math.round(connector.actualPowerKw).toLocaleString("zh-CN")}<small>kW</small></strong></div>
         <div><span>请求功率</span><strong>{Math.round(connector.requestedPowerKw).toLocaleString("zh-CN")}<small>kW</small></strong></div>
       </div>
-      {vehicle ? <div className="vehicle-session">
-        <VehicleGlyph vehicle={vehicle} onClick={() => onVehicle(vehicle)} />
-        <div className="vehicle-session-data">
-          <div className="vehicle-session-head"><div><strong>{vehicle.id}</strong><span className="vehicle-session-model" title={vehicle.name}>{vehicle.name}</span><small>{vehicle.chargingClass === "flash_capable" ? "闪充" : "普通"}</small></div><small>{statusNames[vehicle.status]}</small></div>
-          <div className="connector-soc"><div><span>SOC</span><strong>{vehicle.currentSocPercent.toFixed(1)}%</strong><small>目标 {vehicle.targetSocPercent}%</small></div><i><em style={{ width: `${Math.min(100, vehicle.currentSocPercent)}%` }} /><b style={{ left: `${Math.min(100, vehicle.targetSocPercent)}%` }} /></i></div>
-          <div className="session-eta"><span>预计剩余</span><strong>{remainingChargeSec > 0 ? formatDuration(remainingChargeSec) : "—"}</strong></div>
+      {vehicle ? <>
+        <div className="vehicle-session">
+          <VehicleGlyph vehicle={vehicle} onClick={() => onVehicle(vehicle)} />
+          <div className="vehicle-session-data">
+            <div className="vehicle-session-head"><div><strong>{vehicle.id}</strong><span className="vehicle-session-model" title={vehicle.name}>{vehicle.name}</span><small>{vehicle.chargingClass === "flash_capable" ? "闪充" : "普通"}</small></div><small>{statusNames[vehicle.status]}</small></div>
+            <div className="connector-soc"><div><span>SOC</span><strong>{vehicle.currentSocPercent.toFixed(1)}%</strong><small>目标 {vehicle.targetSocPercent}%</small></div><i><em style={{ width: `${Math.min(100, vehicle.currentSocPercent)}%` }} /><b style={{ left: `${Math.min(100, vehicle.targetSocPercent)}%` }} /></i></div>
+            <div className="session-eta"><span>预计剩余</span><strong>{remainingChargeSec > 0 ? formatDuration(remainingChargeSec) : "—"}</strong></div>
+          </div>
         </div>
-      </div> : <div className="connector-empty"><strong>{isTurnover ? `车位周转 ${formatDuration(connector.turnoverRemainingSec)}` : isIncompatibleIdle ? "枪口可用，但无兼容车辆" : "暂无接入车辆"}</strong><span>{isTurnover ? `周转完成后继续调度 · 默认 ${formatDuration(config.turnoverSec)}` : isIncompatibleIdle ? `${standardWaiting} 辆普通直流车辆仅可使用 A 通用枪` : "等待调度兼容车辆"}</span></div>}
+        <div className="mobile-connector-readings" aria-label={`${vehicle.id} 当前充电数据`}>
+          <span><small>实际功率</small><strong>{Math.round(connector.actualPowerKw).toLocaleString("zh-CN")}<em>kW</em></strong><i>请求 {Math.round(connector.requestedPowerKw).toLocaleString("zh-CN")} kW</i></span>
+          <span><small>SOC</small><strong>{vehicle.currentSocPercent.toFixed(1)}<em>%</em></strong><i>目标 {vehicle.targetSocPercent}%</i></span>
+          <span><small>预计剩余</small><strong>{remainingChargeSec > 0 ? formatDuration(remainingChargeSec) : "—"}</strong></span>
+        </div>
+      </> : <div className="connector-empty"><strong>{isTurnover ? `车位周转 ${formatDuration(connector.turnoverRemainingSec)}` : isIncompatibleIdle ? "枪口可用，但无兼容车辆" : "暂无接入车辆"}</strong><span>{isTurnover ? `周转完成后继续调度 · 默认 ${formatDuration(config.turnoverSec)}` : isIncompatibleIdle ? `${standardWaiting} 辆普通直流车辆仅可使用 A 通用枪` : "等待调度兼容车辆"}</span></div>}
       {vehicle?.chargingClass === "flash_capable" && connector.role === "universal" && <p className="connector-note">闪充兼容车当前使用 A 通用枪</p>}
       {isLimited && <p className="connector-note warning"><strong>功率受限</strong><span>{limitLabels.length ? limitLabels.join(" · ") : "实际功率低于请求功率"}</span></p>}
       {isIncompatibleIdle && <p className="connector-note warning"><strong>B 枪空闲</strong><span>等待车辆与专用枪不兼容</span></p>}
@@ -578,6 +585,7 @@ export function Dashboard() {
     if (connectorA.requestedPowerKw + connectorB.requestedPowerKw > config.pileAggregateMaxPowerKw) return `双枪合计请求 ${Math.round(connectorA.requestedPowerKw + connectorB.requestedPowerKw)}kW，受到每桩 ${config.pileAggregateMaxPowerKw}kW 上限限制。`;
     return "角色感知调度正常：B 枪优先匹配闪充车，A 枪服务剩余最早兼容车辆。";
   })();
+  const mobileAlertLabel = state.gridControl.mode === "outage" ? "电网断电" : state.gridControl.mode === "limited" ? "电网限功率" : activeLimit ? "功率受限" : "兼容性等待";
 
   const toggleRunning = () => setRunning((value) => !value);
   const stepOnce = () => setState((current) => stepSimulation(current, config, 1));
@@ -712,6 +720,13 @@ export function Dashboard() {
         <div className={`task-view task-view-station ${mobileView === "station" ? "active" : ""}`}>
         <section ref={stationPanelRef} className="station-panel panel">
           <div className="panel-title station-title"><div><h2>01# 兆瓦闪充站 · 双枪作业</h2></div><div className="station-status"><span className={activeLimit || state.gridControl.mode !== "normal" ? "warning-text" : "ok-text"}>{state.gridControl.mode === "outage" ? "电网断电 · 储能支撑" : state.gridControl.mode === "limited" ? `电网临时限至 ${effectiveGridLimit}kW` : activeLimit ? "功率受限" : "运行正常"}</span><small>T+{formatTime(state.timeSec)}</small></div></div>
+          {stationNoticeActive && <div className={`mobile-station-alert ${state.gridControl.mode === "outage" ? "critical" : "warning"}`} role="status"><strong>{mobileAlertLabel}</strong><span>{diagnostics}</span></div>}
+          <section className="mobile-station-summary" aria-label="站级关键状态">
+            <div><span>站端输出</span><strong>{Math.round(state.chargingPowerKw).toLocaleString("zh-CN")}<small>kW</small></strong></div>
+            <div><span>电网输入</span><strong>{Math.round(state.gridPowerKw).toLocaleString("zh-CN")}<small>kW</small></strong></div>
+            <div><span>储能 SOC</span><strong>{storageSoc.toFixed(1)}<small>%</small></strong></div>
+            <div><span>排队车辆</span><strong>{state.queue.length}<small>辆</small></strong></div>
+          </section>
           <div className="energy-summary" aria-label="电网、直流母线与储能功率流向">
             <article className={`energy-summary-item grid-node ${state.gridControl.mode}`}><span className="energy-node-mark">电网</span><div><span className="energy-node-label">电网输入</span><strong>{Math.round(state.gridPowerKw).toLocaleString("zh-CN")}<small>kW</small></strong><p>{gridStatusLabel} · 上限 {Math.round(effectiveGridLimit).toLocaleString("zh-CN")}</p></div></article>
             <div className={`energy-flow-line ${state.gridPowerKw > 0 ? "active" : ""}`} aria-label={`电网向母线输入 ${Math.round(state.gridPowerKw).toLocaleString("zh-CN")} kW`}><span aria-hidden="true">→</span><small>送入母线</small><b>{Math.round(state.gridPowerKw).toLocaleString("zh-CN")} kW</b></div>
@@ -733,6 +748,12 @@ export function Dashboard() {
               <div className={`station-diagnostic ${stationNoticeActive ? "active" : ""}`}><span>{stationNoticeActive ? "需关注" : "调度正常"}</span><p>{diagnostics}</p></div>
             </section>
           </div>
+          <section className="mobile-energy-summary" aria-label="移动供能关系">
+            <header><h3>供能关系</h3><span>储能正值放电 / 负值充电</span></header>
+            <div><span>电网输入</span><strong>{Math.round(state.gridPowerKw).toLocaleString("zh-CN")}<small>kW</small></strong><em>{gridStatusLabel}</em></div>
+            <div><span>储能净功率</span><strong>{state.storage.powerKw >= 0 ? "+" : "−"}{Math.round(storageFlowPowerKw).toLocaleString("zh-CN")}<small>kW</small></strong><em>{storageStateLabel} · SOC {storageSoc.toFixed(1)}%</em></div>
+            <div className="total"><span>直流母线负载</span><strong>{Math.round(busLoadPowerKw).toLocaleString("zh-CN")}<small>kW</small></strong><em>车辆 {Math.round(state.chargingPowerKw).toLocaleString("zh-CN")} · 基础 {config.baseLoadKw}</em></div>
+          </section>
         </section>
 
         <aside className="metrics-panel panel">
