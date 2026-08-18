@@ -88,7 +88,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, summary:focus-v
 .scenario-select select { max-width: 155px; }
 .speed-control select { width: 62px; }
 .model-disclaimer { padding: 5px 18px; color: var(--faint); border-bottom: 1px solid var(--line); text-align: center; background: var(--bg); font-size: 11px; }
-.mobile-status-header, .mobile-view-switch, .mobile-transport, .mobile-only, .mobile-scenario-tools, .mobile-analysis-nav, .mobile-analysis-toolbar, .mobile-vehicle-list, .mobile-analysis-empty, .mobile-curve-heading, .mobile-curve-table-head { display: none; }
+.mobile-status-header, .mobile-view-switch, .mobile-transport, .mobile-only, .mobile-scenario-tools, .mobile-analysis-nav, .mobile-analysis-toolbar, .mobile-vehicle-list, .mobile-analysis-empty, .mobile-curve-heading, .mobile-curve-table-head, .legacy-mode-toggle-btn { display: none; }
 
 .dashboard-grid { min-width: 0; min-height: 0; display: grid; grid-template-columns: clamp(260px, 19vw, 290px) minmax(0, 1fr) clamp(280px, 21vw, 310px); grid-template-rows: auto clamp(460px, 56vh, 560px) minmax(285px, auto); grid-template-areas: "trend trend trend" "config station metrics" "data data data"; gap: 10px; padding: 10px; overflow-x: hidden; overflow-y: auto; }
 .task-view { display: contents; }
@@ -547,10 +547,11 @@ tbody tr:hover { background: var(--cyan-soft); }
 }
 
 @media (max-width: 1023.98px) {
-  html, body { width: 100%; height: 100%; overflow: hidden; }
-  body { min-width: 0; }
-  .app-shell { width: 100%; height: 100dvh; min-height: 0; display: grid; grid-template-rows: 48px 44px minmax(0, 1fr) auto; overflow: hidden; }
-  .topbar, .model-disclaimer, .app-footer { display: none; }
+  html[data-mobile-mode="task"], html[data-mobile-mode="task"] body { width: 100%; height: 100%; overflow: hidden; }
+  html[data-mobile-mode="task"] body { min-width: 0; }
+  html[data-mobile-mode="legacy"] body { overflow: auto; }
+  .mobile-ui-task { width: 100%; height: 100dvh; min-height: 0; display: grid; grid-template-rows: 48px 44px minmax(0, 1fr) auto; overflow: hidden; }
+  .mobile-ui-task .topbar, .mobile-ui-task .model-disclaimer, .mobile-ui-task .app-footer { display: none; }
 
   .mobile-status-header { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 12px; border-bottom: 1px solid var(--line-strong); background: var(--bg-soft); }
   .mobile-product { min-width: 0; display: grid; gap: 1px; }
@@ -572,6 +573,8 @@ tbody tr:hover { background: var(--cyan-soft); }
   .task-view.active { overflow-x: hidden; overflow-y: auto; visibility: visible; pointer-events: auto; -webkit-overflow-scrolling: touch; }
   .task-view > .panel { flex: 0 0 auto; width: 100%; min-width: 0; }
   .task-view .config-panel, .task-view .station-panel, .task-view .metrics-panel { overflow: visible; }
+  .mobile-ui-legacy .task-view { display: contents; visibility: visible; pointer-events: auto; overflow: visible; height: auto; padding: 0; }
+  .mobile-ui-legacy .task-view > .panel { flex: none; width: 100%; }
   .metrics-panel { display: block; }
 
   .desktop-only { display: none !important; }
@@ -901,6 +904,62 @@ tbody tr:hover { background: var(--cyan-soft); }
   .mobile-transport label { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; border: 1px solid var(--line); background: var(--panel); }
   .mobile-transport label span { padding-left: 9px; color: var(--muted); font-size: 11px; }
   .mobile-transport select { width: 100%; height: 42px; min-width: 0; padding: 7px 6px; border: 0; background: transparent; color: var(--text); font-size: 12px; }
+
+  /* === Task mode: hide task-only elements from legacy === */
+  .mobile-ui-legacy .mobile-status-header,
+  .mobile-ui-legacy .mobile-view-switch,
+  .mobile-ui-legacy .mobile-transport,
+  .mobile-ui-legacy .mobile-scenario-tools { display: none !important; }
+
+  /* === Legacy mode: stacked page layout === */
+  .mobile-ui-legacy { height: auto; min-height: 100vh; display: block; overflow: visible; }
+  .mobile-ui-legacy .topbar { display: flex; flex-direction: column; align-items: stretch; position: static; min-height: 0; }
+  .mobile-ui-legacy .product-context,
+  .mobile-ui-legacy .simulation-status,
+  .mobile-ui-legacy .transport-controls,
+  .mobile-ui-legacy .scenario-actions,
+  .mobile-ui-legacy .utility-actions { flex-wrap: wrap; }
+  .mobile-ui-legacy .model-disclaimer { display: block; }
+  .mobile-ui-legacy .app-footer { display: flex; }
+  .mobile-ui-legacy .dashboard-grid { display: flex; flex-direction: column; padding: 7px; overflow: visible; gap: 10px; }
+  .mobile-ui-legacy .task-view { display: contents; }
+  .mobile-ui-legacy .trend-overview { order: 0; width: 100%; }
+  .mobile-ui-legacy .station-panel { order: 1; width: 100%; overflow: visible; }
+  .mobile-ui-legacy .metrics-panel { order: 2; width: 100%; display: block; }
+  .mobile-ui-legacy .config-panel { order: 3; width: 100%; overflow: visible; }
+  .mobile-ui-legacy .data-panel { order: 4; width: 100%; }
+  .mobile-ui-legacy .trend-overview-head { align-items: stretch; flex-direction: column; }
+  .mobile-ui-legacy .trend-overview-actions { align-items: stretch; flex-direction: column; }
+  .mobile-ui-legacy .trend-dashboard { grid-template-columns: 1fr; }
+  .mobile-ui-legacy .metrics-panel .metric-grid { grid-template-columns: repeat(2, 1fr); }
+  .mobile-ui-legacy .analytics-grid { grid-template-columns: repeat(2, 1fr); }
+  .mobile-ui-legacy .curve-editor, .mobile-ui-legacy .sources, .mobile-ui-legacy .chart-content { grid-template-columns: 1fr; }
+  .mobile-ui-legacy .trend-wrap { border-left: 0; padding-left: 0; }
+  .mobile-ui-legacy .mobile-station-alert,
+  .mobile-ui-legacy .mobile-station-summary,
+  .mobile-ui-legacy .mobile-energy-summary,
+  .mobile-ui-legacy .mobile-connector-readings,
+  .mobile-ui-legacy .mobile-analysis-nav,
+  .mobile-ui-legacy .mobile-analysis-toolbar,
+  .mobile-ui-legacy .mobile-vehicle-list,
+  .mobile-ui-legacy .mobile-analysis-empty,
+  .mobile-ui-legacy .mobile-curve-heading,
+  .mobile-ui-legacy .mobile-curve-table-head,
+  .mobile-ui-legacy .mobile-only { display: none !important; }
+  .mobile-ui-legacy .connector-power-grid { display: grid; }
+  .mobile-ui-legacy .connector-soc, .mobile-ui-legacy .session-eta { display: flex; }
+  .mobile-ui-legacy .station-title { display: flex; }
+  .mobile-ui-legacy .energy-summary { display: grid; }
+  .mobile-ui-legacy .station-diagnostic { display: grid; }
+  .mobile-ui-legacy .desktop-only { display: inline !important; }
+  .mobile-ui-legacy .desktop-vehicle-table { display: block; }
+  .mobile-ui-legacy .tabs { display: flex; }
+  .mobile-ui-legacy .legacy-mode-toggle-btn { display: inline-flex; }
+
+  /* Task/legacy mode toggle shared */
+  .mobile-ui-mode-toggle { padding: 10px 12px; border-top: 1px solid var(--line-strong); }
+  .mobile-ui-mode-toggle button { width: 100%; min-height: 44px; padding: 8px 12px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font-size: 12px; }
+  .mobile-ui-mode-toggle button:hover { border-color: var(--line-strong); background: var(--panel-raised); }
 }
 
 @media (max-width: 560px) {

@@ -44,6 +44,7 @@ const tabs = [
 type Tab = typeof tabs[number]["name"];
 type MobileView = "station" | "control" | "analysis";
 type MobileAnalysisView = "trend" | "vehicles" | "events" | "results" | "model" | "reference";
+type MobileUiMode = "task" | "legacy";
 
 const statusNames: Record<Vehicle["status"], string> = {
   scheduled: "即将到达",
@@ -330,6 +331,13 @@ export function Dashboard() {
   const [renameDraft, setRenameDraft] = useState("");
   const [renameError, setRenameError] = useState("");
   const [newModelError, setNewModelError] = useState("");
+  const [mobileUiMode, setMobileUiMode] = useState<MobileUiMode>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("flash-sim-mobile-ui-mode");
+      if (saved === "legacy") return "legacy";
+    }
+    return "task";
+  });
   const [manual, setManual] = useState({ capacity: 112, maxPower: 1500, initialSoc: 20, targetSoc: 80, quantity: 1 });
   const [manualVehicleModelId, setManualVehicleModelId] = useState<string>(DEFAULT_FLASH_MODEL_ID);
   const [gridLimitDraft, setGridLimitDraft] = useState(500);
@@ -366,6 +374,14 @@ export function Dashboard() {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem("flash-sim-theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    localStorage.setItem("flash-sim-mobile-ui-mode", mobileUiMode);
+  }, [mobileUiMode]);
+
+  useEffect(() => {
+    document.documentElement.dataset.mobileMode = mobileUiMode;
+  }, [mobileUiMode]);
 
   useEffect(() => {
     localStorage.setItem("flash-sim-config", JSON.stringify(config));
@@ -691,7 +707,7 @@ export function Dashboard() {
   };
 
   return (
-    <div className={`app-shell ${activeDialog ? "overlay-open" : ""}`}>
+    <div className={`app-shell ${mobileUiMode === "task" ? "mobile-ui-task" : "mobile-ui-legacy"} ${activeDialog ? "overlay-open" : ""}`}>
       <header className="topbar">
         <div className="product-context">
           <div className="brand-block"><h1>兆瓦闪充站仿真</h1></div>
@@ -715,6 +731,7 @@ export function Dashboard() {
         <div className="utility-actions" role="group" aria-label="显示与帮助">
           <button className="quiet-action" onClick={() => setTheme((value) => value === "dark" ? "light" : "dark")} aria-label="切换深浅主题">{theme === "dark" ? "浅色" : "深色"}</button>
           <button className="quiet-action" onClick={() => setShowHelp(true)}>帮助</button>
+          <button className="quiet-action legacy-mode-toggle-btn" onClick={() => setMobileUiMode("task")}>新版界面</button>
           <input ref={importRef} hidden type="file" accept="application/json,.json" onChange={(event) => importScenario(event.target.files?.[0])} />
         </div>
       </header>
@@ -827,6 +844,9 @@ export function Dashboard() {
               <div className="mobile-utility-actions" role="group" aria-label="移动显示与帮助">
                 <button type="button" className="quiet-action" onClick={() => setTheme((value) => value === "dark" ? "light" : "dark")}>{theme === "dark" ? "切换浅色主题" : "切换深色主题"}</button>
                 <button type="button" className="quiet-action" onClick={() => setShowHelp(true)}>打开帮助</button>
+              </div>
+              <div className="mobile-ui-mode-toggle" role="group" aria-label="移动界面模式">
+                <button type="button" onClick={() => setMobileUiMode("legacy")}>切换到旧版移动界面</button>
               </div>
             </div>
           </details>
